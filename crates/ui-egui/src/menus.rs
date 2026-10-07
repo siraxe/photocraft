@@ -225,11 +225,12 @@ pub(crate) fn invoke_unguarded(app: &mut PhotocraftApp, ctx: &egui::Context, id:
             }
         }
         "file.save" => {
+            // Writes back only to a layered file; a flat one goes through Save As.
             let path = params
                 .get("path")
                 .and_then(Value::as_str)
                 .map(str::to_string)
-                .or_else(|| app.session.active().and_then(|d| d.path.clone()).filter(|p| saves_in_place(p)));
+                .or_else(|| app.session.active().and_then(|d| d.path.clone()).filter(|p| photocraft_engine::file_cmds::saves_in_place(p)));
             app.save_as(path).map(|(p, w)| json!({"path": p, "warnings": w}))
         }
         "file.exit" => {
@@ -428,13 +429,6 @@ pub(crate) fn invoke_unguarded(app: &mut PhotocraftApp, ctx: &egui::Context, id:
 
 fn open_path(app: &mut PhotocraftApp, path: &str) -> Result<Value, String> {
     app.open_path(path).map(|w| json!({"warnings": w}))
-}
-
-/// File › Save writes back to the document's own file for layered formats (PSD, PSB, .pcraft);
-/// flat files go through Save As, like Photoshop.
-fn saves_in_place(path: &str) -> bool {
-    let ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
-    matches!(ext.as_str(), "psd" | "psb" | "pcraft")
 }
 
 pub fn is_enabled(app: &PhotocraftApp, id: &str) -> bool {

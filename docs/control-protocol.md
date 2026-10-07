@@ -51,7 +51,7 @@ The transport is `apps/photocraft/src/control_server.rs`, and the handlers are i
   base64 PNG data; a path is relative to the automation write root. Raises the window first
   (default) because occluded macOS windows stop rendering
 - `ui.focus`: bring the main window to the front
-- `app.open {path}` / `app.save {path}`: relative file I/O through the configured automation roots (`app.open` reads under the read root, `app.save` writes under the write root; absolute paths, `..` and paths escaping the root are refused, and both fail closed when no root was granted). Both reply with `warnings` (import/export notes such as "adjustment layer flattened"; `[]` when none), also shown to the user in the status bar and as a notice (`notices` in `ui.inspect`); `app.open` also returns the `path` and document `name`, `app.save` the `path` written. Automation opens and saves never fire script events. `file.open`, `file.save`, `file.saveAs` and `file.saveACopy` reply with `warnings` the same way
+- `app.open {path}` / `app.save {path}`: relative file I/O through the configured automation roots (`app.open` reads under the read root, `app.save` writes under the write root; absolute paths, `..` and paths escaping the root are refused, and both fail closed when no root was granted). Both reply with `warnings` (import/export notes such as "adjustment layer flattened"; `[]` when none), also shown to the user in the status bar and as a notice (`notices` in `ui.inspect`); `app.open` also returns the `path` and document `name`, `app.save` the `path` written. `app.save` without `path` writes back only to the document's own PSD, PSB or `.pcraft` file, like File › Save. Automation opens and saves never fire script events. `file.open`, `file.save`, `file.saveAs` and `file.saveACopy` reply with `warnings` the same way
 - `app.quit`
 
 ## Engine commands
@@ -199,7 +199,7 @@ no MCP framing, no app start-up per command. Configure its file access with the 
 | `engine.commands` | `{filter?}`: registry with params docs and enablement |
 | `session.list` | open documents and the active index |
 | `doc.open` / `doc.new` | `{path}` / `file.new` params |
-| `doc.save` | `{path?, format?, quality?, index?}` (`.pcraft` native, else export by extension) |
+| `doc.save` | `{path?, format?, quality?, index?}` (`.pcraft` native, else export by extension). Without `path` only a PSD, PSB or `.pcraft` document is written back to its own file, in its own format; anything else is an error and the file is left unchanged |
 | `doc.inspect` | `{index?}`: same JSON as `document.inspect` |
 | `doc.render` | `{index?, maxSide? (1024; 0 = full), path?}`: PNG to `path`, else `{mime, base64}` |
 | `doc.select` / `doc.close` | `{index}` / `{index?}` |

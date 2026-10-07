@@ -377,3 +377,16 @@ fn guide_layouts() {
     assert_eq!(g.vertical, vec![10.0, 30.0, 50.0]);
     assert_eq!(g.horizontal, vec![10.0, 20.0, 30.0]);
 }
+
+#[test]
+fn only_layered_files_save_in_place() {
+    for path in ["a.psd", "dir/a.PSB", r"C:\w\a.pcraft", "my.dir/a.psd"] {
+        assert!(saves_in_place(path), "{path}");
+    }
+    // Flat formats, no extension, a dotted folder with an extensionless file, a dot file.
+    for path in ["a.png", "a.jpg", "a", "my.psd/a", ".psd", "a.", ""] {
+        assert!(!saves_in_place(path), "{path}");
+    }
+    assert_eq!(extension("dir/Photo.JPEG").as_deref(), Some("jpeg"));
+    assert_eq!(extension("my.dir/name"), None);
+}
