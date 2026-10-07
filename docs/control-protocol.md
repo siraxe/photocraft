@@ -203,7 +203,7 @@ no MCP framing, no app start-up per command. Configure its file access with the 
 | `doc.inspect` | `{index?}`: same JSON as `document.inspect` |
 | `doc.render` | `{index?, maxSide? (1024; 0 = full), path?}`: PNG to `path`, else `{mime, base64}` |
 | `doc.select` / `doc.close` | `{index}` / `{index?}` |
-| `batch` | `{steps: [{command, params?} \| {method, params?}], stopOnError? (true)}` → `{completed, failed, results}` |
+| `batch` | `{steps: [{command, params?, wait?} \| {method, params?}], stopOnError? (true)}` → `{completed, failed, results}` (a step with `wait: false` starts a long command as a background job, like `engine.execute`) |
 | `methods` | the list above |
 
 ```sh
@@ -214,8 +214,9 @@ printf '%s\n' \
   photocraft-cli serve --automation-read-root /work/project --automation-write-root /work/project
 ```
 
-The MCP server has the same batching as the `command_batch` tool (`{steps:[{id, params}], stop_on_error}`),
-in headless and bridge mode.
+The MCP server has the same batching as the `command_batch` tool (`{steps:[{id, params, wait?}], stop_on_error}`),
+in headless and bridge mode. A step with `wait: false` returns `{job, pending}` at once, as `command_run`
+does; later steps that edit the same document fail with a message naming the job until it ends.
 
 ## Transport limits
 
