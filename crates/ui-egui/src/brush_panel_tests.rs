@@ -724,6 +724,21 @@ fn update_current_brush_button_overwrites_the_picked_preset_in_place() {
     assert!(!chalk.builtin, "an updated built-in becomes the user's preset");
 }
 
+/// Each painting tool keeps its own brush (#218): the preset picked for one tool is not the
+/// current preset of the next, so Update can't overwrite it with the other tool's brush.
+#[test]
+fn switching_tools_forgets_the_picked_preset() {
+    let mut app = app();
+    app.ui.tool = crate::state::Tool::Brush;
+    crate::paint_mouse::sync_tool_brush(&mut app);
+    app.run("tools.setBrush", json!({ "preset": "Chalk" })).unwrap();
+    assert_eq!(app.session.tools.current_preset.as_deref(), Some("Chalk"));
+    app.ui.tool = crate::state::Tool::Eraser;
+    crate::paint_mouse::sync_tool_brush(&mut app);
+    assert_eq!(app.session.tools.current_preset, None);
+    assert!(app.run("brush.presets.update", json!({})).is_err());
+}
+
 #[test]
 fn options_bar_reaches_brush_settings_and_the_preset_library() {
     use egui_kittest::kittest::Queryable;

@@ -646,8 +646,7 @@ fn presets_update(s: &mut Session, p: &Value) -> Result<Value> {
         Some(patch) => merge_brush(&s.tools.brush, patch, cmd)?,
         None => s.tools.brush.clone(),
     };
-    let i = s.tools.presets.iter().position(|x| x.name.eq_ignore_ascii_case(&name)).ok_or_else(|| bad(cmd, format!("no brush preset named `{name}`")))?;
-    let pr = &mut s.tools.presets[i];
+    let pr = s.tools.presets.iter_mut().find(|x| x.name.eq_ignore_ascii_case(&name)).ok_or_else(|| bad(cmd, format!("no brush preset named `{name}`")))?;
     pr.brush = brush;
     pr.builtin = false;
     let (name, group) = (pr.name.clone(), pr.group.clone());
