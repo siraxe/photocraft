@@ -958,6 +958,7 @@
 	Brush Preset Options	Параметры наборов кистей
 	New Brush	Новая кисть
 	Create new brush from these settings	Создать новую кисть из этих параметров
+	Update the current brush with these settings	Обновить текущую кисть этими параметрами
 	Reset the brush to the defaults	Сбросить кисть к значениям по умолчанию
 	No brush presets	Нет наборов кистей
 	Override Pressure	Переопределить нажим

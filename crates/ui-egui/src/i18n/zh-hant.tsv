@@ -1922,6 +1922,7 @@
 	Collapse group  ({key}-click: all groups)	收合群組 ({key}+按一下：全部群組)
 	Create new brush from the current settings	以目前設定建立新筆刷
 	Create new brush from these settings	以這些設定建立新筆刷
+	Update the current brush with these settings	以這些設定更新目前筆刷
 	Delete brush	刪除筆刷
 	Drag the arrow to set the angle, the dots to set the roundness	拖曳箭頭設定角度，拖曳圓點設定圓度
 	Expand	展開

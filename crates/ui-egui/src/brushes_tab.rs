@@ -564,13 +564,7 @@ fn rename_bar(ui: &mut egui::Ui, st: &mut BrushesPanelState, acts: &mut Vec<Acti
 /// the rename bar above them while a rename is open. `current` is the selected preset's name:
 /// selection is by identity, so it survives edits and tells look-alike duplicates apart. Group
 /// toggles and renames update `st`; the returned actions are commands for [`apply`].
-pub fn preset_list(
-    ui: &mut egui::Ui,
-    presets: &[BrushPreset],
-    current: Option<&str>,
-    st: &mut BrushesPanelState,
-    layout: ListLayout,
-) -> Vec<Action> {
+pub fn preset_list(ui: &mut egui::Ui, presets: &[BrushPreset], current: Option<&str>, st: &mut BrushesPanelState, layout: ListLayout) -> Vec<Action> {
     let mut acts = Vec::new();
     rename_bar(ui, st, &mut acts);
     let filter = st.filter.trim().to_lowercase();
@@ -671,12 +665,7 @@ pub fn show(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
         ui.label(RichText::new(format!("{} presets", app.session.tools.presets.len())).color(t.text_faint));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             // The current preset by identity: editing the brush after picking must not deselect it.
-            let current = app
-                .session
-                .tools
-                .current_preset
-                .clone()
-                .filter(|n| app.session.tools.presets.iter().any(|p| p.name.eq_ignore_ascii_case(n)));
+            let current = app.session.tools.current_preset.clone().filter(|n| app.session.tools.presets.iter().any(|p| p.name.eq_ignore_ascii_case(n)));
             if ui.add_enabled_ui(current.is_some(), |ui| icons::button(ui, "trash", 24.0, false, "Delete brush")).inner.clicked()
                 && let Some(name) = current
             {

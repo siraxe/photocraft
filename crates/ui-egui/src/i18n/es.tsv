@@ -1922,6 +1922,7 @@
 	Collapse group  ({key}-click: all groups)	Contraer grupo  ({key}-clic: todos los grupos)
 	Create new brush from the current settings	Crear un pincel nuevo con los ajustes actuales
 	Create new brush from these settings	Crear un pincel nuevo con estos ajustes
+	Update the current brush with these settings	Actualizar el pincel actual con estos ajustes
 	Delete brush	Eliminar pincel
 	Drag the arrow to set the angle, the dots to set the roundness	Arrastre la flecha para fijar el ángulo y los puntos para fijar la redondez
 	Expand	Expandir
