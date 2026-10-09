@@ -179,9 +179,8 @@ pub fn show_picker(app: &mut PhotocraftApp, ctx: &egui::Context) {
     // close in the frame it opened.
     let opened_this_press = std::mem::take(&mut app.brush_picker_open_press);
     let press = ctx.input(|i| i.pointer.any_pressed().then(|| i.pointer.interact_pos()).flatten());
-    let outside = !opened_this_press
-        && press.is_some_and(|p| !area.response.rect.contains(p) && !crate::brush_picker::on_chip(ctx, p))
-        && !egui::Popup::is_any_open(ctx);
+    let outside =
+        !opened_this_press && press.is_some_and(|p| !area.response.rect.contains(p) && !crate::brush_picker::on_chip(ctx, p)) && !egui::Popup::is_any_open(ctx);
     if outside || key_close || area.inner {
         crate::brush_picker::close(&mut app.ui);
     }
