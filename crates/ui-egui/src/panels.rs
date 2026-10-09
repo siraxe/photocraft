@@ -455,6 +455,8 @@ pub fn title_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                         ("Photography".to_string(), tl!("Photography")),
                         ("Painting".to_string(), tl!("Painting")),
                         ("Graphic and Web".to_string(), tl!("Graphic and Web")),
+                        ("Pixel Art".to_string(), tl!("Pixel Art")),
+                        ("Motion".to_string(), tl!("Motion")),
                     ];
                     // A narrow bar drops what is also in a menu, Discord first (below), then
                     // the theme toggle (Preferences), then search (Edit › Search), and narrows
@@ -988,8 +990,13 @@ pub fn options_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                         if widgets::secondary_button(ui, tl!("Clear"), 0.0).clicked() {
                             o.crop_ratio.clear();
                         }
-                        let _ = icons::button(ui, "grid-3x3", 24.0, true, tl!("Overlay: Rule of Thirds"));
+                        crate::crop_straighten::options_button(&mut app.crop.straighten, ui);
+                        crate::crop_overlay::options_button(o, ui);
+                        let pick_shield_color = crate::crop_shield::options_button(&mut o.crop_shield, ui);
                         widgets::checkbox(ui, &mut o.crop_delete, tl!("Delete Cropped Pixels"));
+                        if pick_shield_color {
+                            crate::crop_shield::pick_custom_color(app);
+                        }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if icons::button(
                                 ui,
@@ -1003,8 +1010,7 @@ pub fn options_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                                 crate::canvas::commit_crop(app);
                             }
                             if icons::button(ui, "ban", 26.0, false, tl!("Cancel current crop operation  (Esc)")).clicked() {
-                                app.ui.crop_rect = None;
-                                app.ui.crop_angle = 0.0;
+                                crate::crop_ui::cancel(app);
                             }
                         });
                     }
@@ -1143,7 +1149,7 @@ pub fn options_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                     Tool::Crop => hint(
                         ui,
                         &crate::i18n::fmt(
-                            tl!("Drag a crop box · drag inside to move · edges resize ({ratio} ratio, {centre} centre) · Space moves while drawing · {commit} commits · Esc cancels"),
+                            tl!("Drag a crop box · drag inside to move · edges resize ({ratio} ratio, {centre} centre) · Space moves while drawing · arrows nudge · X swaps orientation · {commit} commits · Esc cancels"),
                             &[
                                 ("ratio", &crate::shortcuts::pretty("Shift")),
                                 ("centre", &crate::shortcuts::pretty("Alt")),
@@ -1469,8 +1475,9 @@ fn navigator(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     // Visible-area rectangle.
     let v = app.ui.views[idx].clone();
     let canvas = app.last_canvas_rect;
-    let vw = canvas.width() / v.zoom * s;
-    let vh = canvas.height() / v.zoom * s;
+    let point_zoom = (v.zoom / app.canvas_ppp()).max(1e-6);
+    let vw = canvas.width() / point_zoom * s;
+    let vh = canvas.height() / point_zoom * s;
     let c = pos2(rect.min.x + v.center[0] * s, rect.min.y + v.center[1] * s);
     let vr = Rect::from_center_size(c, vec2(vw, vh)).intersect(frame.shrink(1.0));
     ui.painter().rect_stroke(vr, 2.0, Stroke::new(1.5, Color32::from_rgb(255, 84, 84)), StrokeKind::Middle);
@@ -1642,12 +1649,13 @@ fn layers(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                 let opacity_label = if t.pro { tl!("Opacity:") } else { tl!("Opacity") };
                 let right = (body_text_width(ui, opacity_label) + LAYER_PCT_W + 2.0 * ui.spacing().item_spacing.x + 16.0).max(150.0);
                 let w = ui.available_width() - right;
-                let (chosen, hovered) = widgets::dropdown_hovered(ui, "blend", &mut m, &blend_options(l.is_group()), w.max(100.0));
-                if chosen {
+                let (chosen, hovered) = widgets::dropdown_wheel_hovered(ui, "blend", &mut m, &blend_options(l.is_group()), w.max(100.0));
+                // One step per choice: a click, an arrow key or each wheel notch (#1747).
+                for m in &chosen {
                     actions.push(("layer.setProps".into(), json!({"layer": l.id.0, "blend": m.label()})));
                 }
                 // Hovering a mode previews it on the canvas (#970).
-                crate::blend_preview::hover(app, l.id, hovered.filter(|_| !chosen));
+                crate::blend_preview::hover(app, l.id, hovered.filter(|_| chosen.is_empty()));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let mut o = l.opacity * 100.0;
                     let r = widgets::popup_value_field(ui, opacity_label, &mut o, 0.0..=100.0, "%", LAYER_PCT_W);
@@ -1822,17 +1830,20 @@ fn layers(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                 ui.close();
             }
         });
-        if icons::button(
-            ui,
-            "layer-mask",
-            26.0,
-            false,
-            &crate::i18n::fmt(tl!("Add a mask  (from the selection; {key} inverts)"), &[("key", &crate::shortcuts::pretty("Alt"))]),
-        )
-        .clicked()
+        // Like Photoshop the button never replaces a mask (#2075): with a layer mask it adds a
+        // vector mask, and with both it is greyed.
+        let alt = ui.input(|i| i.modifiers.alt);
+        let mask_cmd = crate::layer_menu_ui::mask_button_command(active_layer, doc.selection.is_some(), alt);
+        let mask_tip = if active_layer.is_some_and(|l| l.mask.is_some()) {
+            tl!("Add vector mask").to_string()
+        } else {
+            crate::i18n::fmt(tl!("Add a mask  (from the selection; {key} inverts)"), &[("key", &crate::shortcuts::pretty("Alt"))])
+        };
+        let mask_btn = ui.add_enabled_ui(mask_cmd.is_some(), |ui| icons::button(ui, "layer-mask", 26.0, false, &mask_tip)).inner;
+        if mask_btn.clicked()
+            && let Some(cmd) = mask_cmd
         {
-            let alt = ui.input(|i| i.modifiers.alt);
-            actions.push((crate::layer_menu_ui::add_mask_command(doc.selection.is_some(), alt).into(), json!({})));
+            actions.push((cmd.into(), json!({})));
         }
         let fx = fx_button(ui, 26.0, tl!("Add a layer style"));
         egui::Popup::menu(&fx).open_memory(footer_menu_right_click(&fx)).show(|ui| {
@@ -2346,15 +2357,29 @@ fn history(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
             }
         }
     });
+    let mut footer_cmd: Option<&str> = None;
     if t.pro {
+        let can_delete = app.session.is_enabled("history.deleteState");
+        let can_new = app.session.is_enabled("history.newDocument");
         widgets::panel_footer(ui, |ui| {
-            let _ = icons::button(ui, "trash", 26.0, false, tl!("Delete current state"));
-            let _ = icons::button(ui, "scan", 26.0, false, tl!("Create new snapshot"));
-            let _ = icons::button(ui, "file-plus", 26.0, false, tl!("Create new document from current state"));
+            if ui.add_enabled_ui(can_delete, |ui| icons::button(ui, "trash", 26.0, false, tl!("Delete current state"))).inner.clicked() {
+                footer_cmd = Some("history.deleteState");
+            }
+            // Snapshots are not implemented yet: shown greyed, as Photoshop's footer has the button.
+            ui.add_enabled_ui(false, |ui| icons::button(ui, "scan", 26.0, false, tl!("Create new snapshot")));
+            if ui.add_enabled_ui(can_new, |ui| icons::button(ui, "file-plus", 26.0, false, tl!("Create new document from current state"))).inner.clicked() {
+                footer_cmd = Some("history.newDocument");
+            }
         });
     }
     // An open Free Transform owns Undo (transform_tool::intercept): stepping the document's history under
     // its box would leave it transforming pixels that changed.
+    if let Some(cmd) = footer_cmd.filter(|_| app.ui.transform.is_none())
+        && let Err(e) = app.run(cmd, json!({}))
+    {
+        app.ui.status = e;
+        app.ui.status_error = true;
+    }
     if let Some(delta) = target.filter(|_| app.ui.transform.is_none()) {
         let (cmd, n) = if delta < 0 { ("edit.undo", -delta) } else { ("edit.redo", delta) };
         for _ in 0..n {
@@ -3330,6 +3355,42 @@ mod history_transform_tests {
                 assert!(after < steps, "the click steps back: {steps} -> {after}");
             }
         }
+    }
+
+    /// The Photoshop-theme footer (#1117): trash deletes the current state, file-plus makes a
+    /// new document from it, and the snapshot button is greyed (snapshots aren't implemented).
+    #[test]
+    fn history_footer_buttons_run_their_commands() {
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"width": 200, "height": 150})).unwrap();
+        app.run("layer.new.layer", json!({})).unwrap();
+        app.run("edit.fill", json!({"color": "#ff0000"})).unwrap();
+        let mut h = Harness::builder().with_size(vec2(300.0, 400.0)).build_ui_state(|ui, app: &mut PhotocraftApp| history(app, ui), app);
+        PhotocraftApp::setup_context(&h.ctx, crate::theme::ThemeKind::ProMedium);
+        h.state_mut().ui.theme = crate::theme::ThemeKind::ProMedium;
+        h.run_steps(3);
+        // Footer buttons are the only 26 pt squares; the bar lays them out right to left.
+        let buttons = |h: &Harness<'static, PhotocraftApp>| {
+            let mut b: Vec<(Rect, bool)> = h.ctx.viewport(|v| {
+                v.prev_pass.widgets.layers().flat_map(|(_, w)| w.iter()).filter(|w| w.rect.size() == vec2(26.0, 26.0)).map(|w| (w.rect, w.enabled)).collect()
+            });
+            b.sort_by(|a, b| b.0.center().x.total_cmp(&a.0.center().x));
+            b
+        };
+        let b = buttons(&h);
+        assert_eq!(b.len(), 3, "trash, snapshot, new document: {b:?}");
+        assert!(b[0].1 && !b[1].1 && b[2].1, "only the snapshot button is disabled: {b:?}");
+        let docs = h.state().session.documents().len();
+        click(&mut h, b[2].0.center());
+        assert_eq!(h.state().session.documents().len(), docs + 1, "file-plus makes a new document");
+        h.state_mut().session.set_active(0);
+        h.run_steps(2);
+        let steps = h.state().session.active().unwrap().history.entries().len();
+        let b = buttons(&h);
+        click(&mut h, b[0].0.center());
+        let st = h.state().session.active().unwrap();
+        assert_eq!(st.history.entries().len(), steps - 1, "trash deletes the current state");
+        assert!(!st.history.can_redo(), "and it can't be redone");
     }
 }
 

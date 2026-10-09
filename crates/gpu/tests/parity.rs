@@ -348,6 +348,131 @@ fn groups_masks_and_clipping() {
 }
 
 #[test]
+fn hard_stop_gradients_match_cpu_or_fall_back() {
+    let Some(mut g) = gpu() else { return };
+    for depth in [SampleType::U8, SampleType::U16, SampleType::F32] {
+        let mut d = Document::new("hard stops", Size::new(8, 2), ColorMode::Rgb, depth);
+        let mut fill =
+            Fill::gradient(vec![(0.0, Color::BLACK), (0.5, Color::WHITE), (0.5, Color::BLACK), (1.0, Color::WHITE)], 0.0, 1.0, GradientStyle::Linear, false);
+        for opacity in [false, true] {
+            if opacity && let Fill::Gradient { stops, opacity_stops, .. } = &mut fill {
+                *stops = vec![(0.0, Color::WHITE), (1.0, Color::WHITE)];
+                *opacity_stops = vec![(0.0, 0.0), (0.5, 1.0), (0.5, 0.0), (1.0, 1.0)];
+            }
+            d.layers.clear();
+            d.layers.push(Layer::new("gradient", LayerContent::Fill(fill.clone())));
+            let cpu = photocraft_compose::render(&d, d.bounds());
+            assert_eq!(cpu.px[4], [1.0; 4]);
+            let out = match render_to_vec(&mut g.comp, &g.device, &g.queue, &d, d.bounds()) {
+                Ok(out) => out,
+                Err(e) => {
+                    assert!(e.0.contains("coincident gradient stops"), "{e}");
+                    photocraft_compose::render(&d, d.bounds()).px
+                }
+            };
+            let worst = worst_diff(&cpu.px, &out);
+            assert!(worst.0 <= TOL, "{depth:?}: diff {}/255, cpu {:?}, gpu {:?}", worst.0 * 255.0, cpu.px[worst.1], out[worst.1]);
+            assert!(g.comp.supports(&d).is_err(), "hard stops must request the canvas's CPU fallback");
+        }
+
+        // The ordinary two-stop control must still render on the GPU.
+        d.layers[0].content = LayerContent::Fill(Fill::gradient(vec![(0.0, Color::BLACK), (1.0, Color::WHITE)], 0.0, 1.0, GradientStyle::Linear, false));
+        check(&mut g, &d, &format!("linear gradient control {depth:?}"));
+    }
+}
+
+#[test]
+fn hard_stop_fill_fallback_respects_caches_and_visibility() {
+    use photocraft_doc::FillCache;
+    use photocraft_raster::Surface;
+
+    for opacity in [false, true] {
+        // Non-adjacent duplicates must be caught too: the CPU sorts fill stops.
+        let mut fill = Fill::gradient(vec![(0.0, Color::BLACK), (1.0, Color::WHITE)], 0.0, 1.0, GradientStyle::Linear, false);
+        if let Fill::Gradient { stops, opacity_stops, .. } = &mut fill {
+            if opacity {
+                *opacity_stops = vec![(0.5, 1.0), (0.0, 0.0), (0.5, 0.0), (1.0, 1.0)];
+            } else {
+                *stops = vec![(0.5, Color::WHITE), (0.0, Color::BLACK), (0.5, Color::BLACK), (1.0, Color::WHITE)];
+            }
+        }
+        let mut d = Document::new("hard stops", Size::new(8, 2), ColorMode::Rgb, SampleType::U8);
+        d.layers.push(Layer::new("gradient", LayerContent::Fill(fill.clone())));
+        assert_gradient_fallback(&d);
+
+        d.layers[0].visible = false;
+        assert!(photocraft_gpu::plan(&d).is_ok(), "hidden fill is not sampled");
+        d.layers[0].visible = true;
+        d.layers[0].fill_cache = Some(FillCache { fill: fill.clone(), surface: Surface::with_default(d.pixel_format(), &[1.0; 4]) });
+        assert!(photocraft_gpu::plan(&d).is_ok(), "matching fill cache is sampled instead of the ramp");
+        if let LayerContent::Fill(Fill::Gradient { reverse, .. }) = &mut d.layers[0].content {
+            *reverse = true;
+        }
+        assert_gradient_fallback(&d);
+
+        // Group and clipping routes must propagate Unsupported to the canvas too.
+        d.layers[0] = Layer::group("group", vec![Layer::new("gradient", LayerContent::Fill(fill.clone()))]);
+        assert_gradient_fallback(&d);
+        let mut clipped = Layer::new("clipped", LayerContent::Fill(fill));
+        clipped.clipped = true;
+        d.layers = vec![Layer::new("base", LayerContent::Fill(Fill::Solid(Color::WHITE))), clipped];
+        assert_gradient_fallback(&d);
+        d.layers.push(Layer::new("cover", LayerContent::Fill(Fill::Solid(Color::WHITE))));
+        assert!(photocraft_gpu::plan(&d).is_ok(), "occluded gradients are not sampled");
+    }
+}
+
+fn assert_gradient_fallback(d: &Document) {
+    let e = photocraft_gpu::plan(d).unwrap_err();
+    assert!(e.0.contains("coincident gradient stops"), "{e}");
+}
+
+#[test]
+fn hard_stop_effects_and_gradient_maps_request_cpu() {
+    let mut d = Document::with_background("hard stops", Size::new(8, 2), ColorMode::Rgb, SampleType::U8, Color::WHITE);
+    for opacity in [false, true] {
+        for position in [0.0, 0.5, 1.0] {
+            let mut gradient = Gradient::default();
+            if opacity {
+                gradient.opacity_stops = vec![(position, 1.0), (position, 0.0)];
+            } else {
+                gradient.stops = vec![(position, Color::WHITE), (position, Color::BLACK)];
+            }
+            let paint = FxPaint::Gradient(gradient.clone());
+            let effects = [
+                Effect::GradientOverlay { common: FxCommon::new(BlendMode::Normal, 1.0), gradient, dither: false },
+                Effect::Stroke(StrokeFx { common: FxCommon::new(BlendMode::Normal, 1.0), size: 1.0, position: StrokePosition::Inside, paint: paint.clone() }),
+                Effect::InnerGlow(glow(paint.clone(), GlowTechnique::Softer, 1.0, 0.0, GlowSource::Edge)),
+                Effect::OuterGlow(glow(paint, GlowTechnique::Softer, 1.0, 0.0, GlowSource::Edge)),
+            ];
+            for effect in effects {
+                d.layers[0].effects.items = vec![effect];
+                assert_gradient_fallback(&d);
+                d.layers[0].effects.enabled = false;
+                assert!(photocraft_gpu::plan(&d).is_ok(), "disabled effects are not sampled");
+                d.layers[0].effects.enabled = true;
+                d.layers[0].effects.items[0].set_enabled(false);
+                assert!(photocraft_gpu::plan(&d).is_ok(), "disabled effect is not sampled");
+            }
+        }
+    }
+    d.layers[0].effects.items.clear();
+    d.layers.push(Layer::new(
+        "map",
+        LayerContent::Adjustment(Adjustment::GradientMap {
+            stops: vec![(0.0, [0.0; 3]), (0.5, [1.0; 3]), (0.5, [0.0; 3]), (1.0, [1.0; 3])],
+            reverse: false,
+            dither: false,
+        }),
+    ));
+    assert_gradient_fallback(&d);
+    d.layers[1].clipped = true;
+    assert_gradient_fallback(&d);
+    d.layers[1].visible = false;
+    assert!(photocraft_gpu::plan(&d).is_ok());
+}
+
+#[test]
 fn fills_and_dissolve() {
     let Some(mut g) = gpu() else { return };
     let mut d = base_doc(64, 48);
@@ -1411,6 +1536,39 @@ fn pattern_fill_layers() {
         missing.content = LayerContent::Fill(Fill::Pattern { name: "nope".into(), id: "nope".into(), scale: 1.0, angle: 0.0, link: true, phase: (0.0, 0.0) });
         d.layers.push(missing);
         fx_check(&mut g, &d, &format!("pattern fill link {link} scale {scale} angle {angle}"));
+    }
+}
+
+/// An RGB pattern paints in the document's mode: grey in a Grayscale document, CMYK colours in
+/// a CMYK one (fills and Pattern Overlay), on the GPU as on the CPU.
+#[test]
+fn rgb_patterns_paint_in_the_document_mode() {
+    let Some(mut g) = gpu() else { return };
+    let pat = checker_pattern();
+    for (mode, fmt) in [(ColorMode::Grayscale, PixelFormat::GRAYA8), (ColorMode::Cmyk, PixelFormat::CMYKA8)] {
+        let mut d = Document::new("m", Size::new(60, 40), mode, SampleType::U8);
+        d.layers.push(noise_layer("bg", fmt, Rect::new(0, 0, 60, 40), 63, 0.0));
+        d.patterns.push(pat.clone());
+        let fill = Fill::Pattern { name: pat.name.clone(), id: pat.id.clone(), scale: 1.0, angle: 0.0, link: true, phase: (0.0, 0.0) };
+        let mut l = Layer::new("pat", LayerContent::Fill(fill));
+        l.mask = Some(mask(Rect::new(0, 0, 30, 40), 64, 0.0));
+        d.layers.push(l);
+        let mut o = blob("overlay", d.pixel_format(), 45.0, 20.0, 12.0, [0.9, 0.4, 0.2]);
+        o.effects.items = vec![Effect::PatternOverlay {
+            common: FxCommon::new(BlendMode::Normal, 1.0),
+            name: pat.name.clone(),
+            id: pat.id.clone(),
+            scale: 1.0,
+            angle: 0.0,
+            link: true,
+            phase: (0.0, 0.0),
+        }];
+        d.layers.push(o);
+        if mode == ColorMode::Grayscale {
+            let cpu = photocraft_compose::flatten(&d);
+            assert!(cpu.px.iter().all(|p| (p[0] - p[1]).abs() < 1e-6 && (p[1] - p[2]).abs() < 1e-6), "a Grayscale composite is neutral");
+        }
+        fx_check(&mut g, &d, &format!("RGB pattern in {mode:?}"));
     }
 }
 

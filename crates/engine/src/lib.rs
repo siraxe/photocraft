@@ -45,6 +45,7 @@ pub mod gallery_cmds;
 pub mod gradient_fill_cmds;
 pub mod group_view_cmds;
 pub mod hidden_target;
+pub mod history_cmds;
 pub mod image_cmds;
 pub mod inspect;
 pub mod jobs;
@@ -562,7 +563,11 @@ impl Session {
         let Some(st) = self.active_mut() else { return false };
         st.coalesce = None;
         match st.history.undo(st.doc.clone()) {
-            Some((d, layers)) => {
+            Some((mut d, layers)) => {
+                // Save As changes file identity outside history, just like the saved path.
+                if d.name != st.doc.name {
+                    Arc::make_mut(&mut d).name.clone_from(&st.doc.name);
+                }
                 // Pixels this step can have touched, so the canvas recomposites only that
                 // (it recomposited everything before).
                 let damage = layer_multi_cmds::step_damage(&d, &st.doc);
@@ -583,7 +588,10 @@ impl Session {
         let Some(st) = self.active_mut() else { return false };
         st.coalesce = None;
         match st.history.redo(st.doc.clone()) {
-            Some((d, layers)) => {
+            Some((mut d, layers)) => {
+                if d.name != st.doc.name {
+                    Arc::make_mut(&mut d).name.clone_from(&st.doc.name);
+                }
                 let damage = layer_multi_cmds::step_damage(&st.doc, &d);
                 st.doc = d;
                 restore_target(st, layers);
@@ -636,4 +644,9 @@ pub(crate) fn fix_selection(st: &mut DocState) {
 #[cfg(test)]
 mod fill_layer_mode_tests;
 #[cfg(test)]
+mod pattern_mode_tests;
+#[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod fx_mode_tests;

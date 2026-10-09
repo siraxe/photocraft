@@ -495,6 +495,13 @@ impl Layouter {
                     ptext.push('\n');
                     continue;
                 }
+                // Imported PSD text can contain literal tab controls. Font shaping may
+                // render those as .notdef boxes; a space preserves the one-byte source
+                // and style/caret offsets while supplying a real whitespace advance.
+                if ch == '\t' {
+                    ptext.push(' ');
+                    continue;
+                }
                 let style = &out.styles[style_at(prange.start + i)];
                 let caps = style.caps;
                 if caps == Caps::AllCaps || small_caps[style_at(prange.start + i)] == SmallCapsMode::Synthetic {

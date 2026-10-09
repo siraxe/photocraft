@@ -210,7 +210,7 @@ pub fn pointer(app: &mut PhotocraftApp, ev: ToolEvent, mods: egui::Modifiers) ->
         app.gradient.drag = None;
         return false;
     }
-    let zoom = app.current_zoom().max(0.01);
+    let zoom = app.point_zoom().max(0.01);
     match ev {
         ToolEvent::Down { x, y, .. } => {
             let p = [x as f32, y as f32];
@@ -231,7 +231,7 @@ pub fn pointer(app: &mut PhotocraftApp, ev: ToolEvent, mods: egui::Modifiers) ->
 }
 
 fn drag_to(app: &mut PhotocraftApp, p: [f32; 2], mods: egui::Modifiers) {
-    let zoom = app.current_zoom().max(0.01);
+    let zoom = app.point_zoom().max(0.01);
     let active = active_gradient(app);
     let Some(drag) = app.gradient.drag.as_mut() else { return };
     // ⇧: 45° gradient angles, the same snap as the classic drag (stroke_constraint.rs).
@@ -284,7 +284,7 @@ fn drag_to(app: &mut PhotocraftApp, p: [f32; 2], mods: egui::Modifiers) {
 
 fn finish(app: &mut PhotocraftApp) {
     let Some(drag) = app.gradient.drag.take() else { return };
-    let zoom = app.current_zoom().max(0.01);
+    let zoom = app.point_zoom().max(0.01);
     match drag {
         Drag::Draw { from, to, redraw } => {
             if dist(from, to) * zoom < 2.0 {

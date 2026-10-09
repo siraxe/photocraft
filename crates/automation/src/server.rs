@@ -233,8 +233,11 @@ pub struct UiSetParams {
     /// Brush Preset picker there, null closes it), brushPickerView, brushSize, gradientBlendMode
     /// (a blend mode name, for the Gradient tool), gradientClassic (bool), eyedropperSampleSize
     /// ("point" or 1, 3, 5, 11, 31, 51, 101), eyedropperSample (current, currentAndBelow, all,
-    /// allNoAdjustments, currentAndBelowNoAdjustments), eyedropperRing (bool). Other fields are an
-    /// error.
+    /// allNoAdjustments, currentAndBelowNoAdjustments), eyedropperRing (bool), cropOverlay (thirds,
+    /// grid, diagonal, triangle, goldenRatio, goldenSpiral), cropOverlayShow (auto, always, never),
+    /// cropOverlayOrientation (0..3), cropShield (an object patching show_cropped_area, enabled,
+    /// color ("matchCanvas" or "custom"), custom_color ([r, g, b]), opacity (0..100) and
+    /// auto_adjust). Other fields are an error.
     pub fields: Value,
 }
 

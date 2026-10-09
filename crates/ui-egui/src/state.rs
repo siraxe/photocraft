@@ -381,7 +381,9 @@ pub enum DialogKind {
 /// Per-document view (camera) state.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct View {
-    /// Screen pixels per document pixel.
+    /// Screen (device) pixels per document pixel: the user-facing zoom (`100%` is `1.0`).
+    /// Canvas geometry works in egui points and divides by `ctx.pixels_per_point`
+    /// (`PhotocraftApp::point_zoom`), so a scaled display doesn't magnify the image.
     pub zoom: f32,
     /// Document-space point shown at the canvas centre.
     pub center: [f32; 2],
@@ -504,6 +506,17 @@ pub struct ToolOptions {
     pub crop_ratio: String,
     #[serde(default = "yes")]
     pub crop_delete: bool,
+    /// Crop overlay (#1919): the guide in the crop box, when it shows and its orientation
+    /// (Photoshop's defaults: Rule of Thirds, Auto Show Overlay). See `crop_overlay`.
+    #[serde(default)]
+    pub crop_overlay: crate::crop_overlay::CropOverlay,
+    #[serde(default)]
+    pub crop_overlay_show: crate::crop_overlay::OverlayShow,
+    #[serde(default)]
+    pub crop_overlay_orientation: u8,
+    /// Crop gear menu (#1919): Show Cropped Area and the crop shield. See `crop_shield`.
+    #[serde(default)]
+    pub crop_shield: crate::crop_shield::CropShield,
     /// Magic Eraser opacity % (tolerance, anti-alias, contiguous and sample-all are shared with the
     /// Magic Wand and Paint Bucket).
     pub magic_eraser_opacity: f32,
@@ -631,6 +644,10 @@ impl Default for ToolOptions {
             move_show_transform: false,
             crop_ratio: String::new(),
             crop_delete: true,
+            crop_overlay: Default::default(),
+            crop_overlay_show: Default::default(),
+            crop_overlay_orientation: 0,
+            crop_shield: Default::default(),
             magic_eraser_opacity: 100.0,
             bg_sampling: "continuous".into(),
             bg_limits: "contiguous".into(),

@@ -64,6 +64,8 @@ struct Ex {
     comps: Option<(Vec<photocraft_doc::LayerComp>, Option<photocraft_doc::LayerComp>)>,
     /// Smart objects: embedded files and filter caches for the global blocks.
     smart: SmartOut,
+    /// The document's patterns, which Pattern Fill layers are rendered from.
+    patterns: Vec<photocraft_doc::Pattern>,
 }
 
 /// How deep embedded documents are exported inside each other before a smart object is written
@@ -776,7 +778,9 @@ impl Ex {
             return c.surface.clone();
         }
         // In the frame the layer's masks give it, like the compositor (masks are stored apart).
-        let buf = photocraft_compose::render_fill_content(l, f, self.canvas, &[]);
+        // Readers composite these pixels (ours keeps them as the fill's rendering), so a pattern
+        // fill must be rendered from the document's patterns, not left transparent (#1907).
+        let buf = photocraft_compose::render_fill_content(l, f, self.canvas, &self.patterns);
         let mut s = Surface::new(self.fmt);
         let vals: Vec<f32> = buf.px.iter().flat_map(|p| photocraft_raster::from_rgba(&self.fmt, *p)).collect();
         s.write_region(self.canvas, &vals);
@@ -1145,6 +1149,7 @@ fn document_to_psd_nested(doc: &Document, opts: &PsdExportOptions, depth: u32) -
         guides: doc.guides.clone(),
         comps: (!crate::comps_map::comps_unchanged(doc)).then(|| (doc.layer_comps.clone(), doc.last_document_state.clone())),
         smart: SmartOut::new(doc, depth),
+        patterns: doc.patterns.clone(),
     };
     if big && !opts.force_psb {
         ex.warnings.push("document exceeds 30000 px; written as PSB".into());

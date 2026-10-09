@@ -33,9 +33,9 @@ fn open_filter_extensions(extensions: &[&str]) -> Vec<String> {
 
 /// File › Save As formats: (filter name, extensions). The filter matching the suggested name's
 /// extension comes first, so a .pcraft document saves as .pcraft by default and everything else
-/// keeps defaulting to Photoshop.
+/// keeps defaulting to PSD.
 const SAVE_FILTERS: &[(&str, &[&str])] = &[
-    ("Photoshop", &["psd", "psb"]),
+    ("PSD Document", &["psd", "psb"]),
     ("PhotoCraft", &["pcraft"]),
     ("PNG", &["png"]),
     ("JPEG", &["jpg"]),
@@ -76,11 +76,16 @@ fn show_file_dialog(request: FileDialogRequest, parent: Option<&eframe::Frame>, 
         dialog = dialog.set_parent(parent);
     }
     let answer: Pin<Box<dyn Future<Output = Option<FileDialogAnswer>> + Send>> = match request {
-        FileDialogRequest::Open { multiple, initial_dir } => {
+        FileDialogRequest::Open { multiple, initial_dir, extensions } => {
             if let Some(dir) = initial_dir {
                 dialog = dialog.set_directory(dir);
             }
-            let dialog = dialog.add_filter("All Formats", &open_filter_extensions(OPEN_EXTS)).add_filter("PhotoCraft", &open_filter_extensions(&["pcraft"]));
+            // A command-specific filter must not inherit the image formats used by File › Open.
+            let dialog = if let Some(exts) = extensions {
+                dialog.add_filter("Supported Files", &open_filter_extensions(&exts.iter().map(String::as_str).collect::<Vec<_>>()))
+            } else {
+                dialog.add_filter("All Formats", &open_filter_extensions(OPEN_EXTS)).add_filter("PhotoCraft", &open_filter_extensions(&["pcraft"]))
+            };
             if multiple {
                 let picked = dialog.pick_files();
                 Box::pin(async move { picked.await.map(|files| FileDialogAnswer::Paths(files.iter().map(path_of).collect())) })
@@ -529,7 +534,7 @@ mod tests {
         for (name, ext) in asked.iter().zip(exts) {
             assert!(save_filters(name)[0].1.iter().any(|e| e == ext), "{name}: {:?}", save_filters(name)[0]);
         }
-        assert_eq!(save_filters("Untitled")[0].0, "Photoshop", "no extension keeps the default");
+        assert_eq!(save_filters("Untitled")[0].0, "PSD Document", "no extension keeps the default");
     }
 
     #[test]

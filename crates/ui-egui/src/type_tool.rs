@@ -54,7 +54,7 @@ fn to_text(aff: &Affine, x: f64, y: f64) -> (f32, f32) {
 /// Topmost visible type layer whose laid-out text contains the document point.
 fn hit_layer(app: &mut PhotocraftApp, x: f64, y: f64) -> Option<LayerId> {
     let doc = app.session.active()?.doc.clone();
-    let slop = 6.0 / app.current_zoom().max(0.01);
+    let slop = 6.0 / app.point_zoom().max(0.01);
     let mut ids: Vec<LayerId> =
         doc.walk().into_iter().filter(|(_, _, l)| l.visible && matches!(l.content, LayerContent::Text(_))).map(|(_, _, l)| l.id).collect();
     ids.reverse(); // walk() is bottom-up; hit the topmost first
@@ -160,7 +160,7 @@ pub(crate) fn box_handle_at(app: &mut PhotocraftApp, id: LayerId, x: f64, y: f64
     let (r, b) = (bx + w, by + h);
     let (mx, my) = (bx + w / 2.0, by + h / 2.0);
     let spots = [(bx, by), (r, by), (r, b), (bx, b), (mx, by), (r, my), (mx, b), (bx, my)];
-    let tol = f64::from(6.0 / app.current_zoom().max(0.01));
+    let tol = f64::from(6.0 / app.point_zoom().max(0.01));
     spots
         .iter()
         .position(|&(sx, sy)| {
@@ -254,10 +254,12 @@ pub fn pointer_up(app: &mut PhotocraftApp, start: [f64; 2], end: [f64; 2]) {
         return;
     }
     let (w, h) = ((end[0] - start[0]).abs(), (end[1] - start[1]).abs());
-    let min = 4.0 / app.current_zoom().max(0.01) as f64;
+    let min = 4.0 / app.point_zoom().max(0.01) as f64;
     let o = app.ui.tool_options.clone();
+    // Preferences ▸ Type: "Fill new type layers with placeholder text" (on by default).
+    let text = if app.session.prefs().type_.fill_new_type_layers_with_placeholder { PLACEHOLDER } else { "" };
     let mut p = json!({
-        "text": PLACEHOLDER,
+        "text": text,
         "orientation": if app.ui.tool == crate::state::Tool::VerticalType { "vertical" } else { "horizontal" },
         "font": o.type_font,
         "fontStyle": o.type_style,
@@ -280,7 +282,7 @@ pub fn pointer_up(app: &mut PhotocraftApp, start: [f64; 2], end: [f64; 2]) {
             let _ = app.run("type.edit", json!({"layer": id, "antialias": o.type_aa, "coalesce": key}));
         }
         // Like Photoshop: the placeholder is selected, so typing replaces it.
-        let n = PLACEHOLDER.chars().count();
+        let n = text.chars().count();
         app.ui.text_edit = Some(TextEdit { layer: id, caret: n, anchor: 0, session: key, created: true, dragging: false, resize: None, preedit: None });
     }
 }
@@ -526,7 +528,10 @@ pub fn handle_keys(app: &mut PhotocraftApp, ctx: &egui::Context) -> bool {
                     Key::Enter if m.command => commit(app),
                     Key::Enter => insert(app, "\n"),
                     Key::Escape if crate::type_transform::active(app) => crate::type_transform::cancel_drag(app),
-                    Key::Escape => commit(app),
+                    // Preferences ▸ Type: with "Use Escape to Commit" off, Escape cancels the
+                    // session (undoes it, removing a just-created layer) like the Cancel button.
+                    Key::Escape if app.session.prefs().type_.use_esc_to_commit => commit(app),
+                    Key::Escape => cancel(app),
                     Key::A if m.command => {
                         if let Some(e) = app.ui.text_edit.as_mut() {
                             e.anchor = 0;
@@ -1528,6 +1533,22 @@ mod tests {
         commit(&mut app);
         let doc = &app.session.active().unwrap().doc;
         assert_eq!(doc.layers.last().unwrap().name, "Héllo world");
+        assert!(app.ui.text_edit.is_none());
+    }
+
+    /// Preferences ▸ Type ▸ Fill new type layers with placeholder text: off, a click creates an
+    /// empty layer (nothing selected) and committing without typing removes it again.
+    #[test]
+    fn placeholder_preference_controls_new_type_layer_text() {
+        let mut app = app();
+        app.run("prefs.set", json!({"path": "type.fillNewTypeLayersWithPlaceholder", "value": false})).unwrap();
+        pointer_up(&mut app, [50.0, 100.0], [50.0, 100.0]);
+        let ed = app.ui.text_edit.clone().unwrap();
+        assert_eq!((ed.anchor, ed.caret), (0, 0), "nothing to select");
+        assert_eq!(layer_text(&app), "");
+        assert_eq!(app.session.active().unwrap().doc.layers.len(), 2, "the layer was created");
+        commit(&mut app);
+        assert_eq!(app.session.active().unwrap().doc.layers.len(), 1, "an empty type layer is removed on commit");
         assert!(app.ui.text_edit.is_none());
     }
 
