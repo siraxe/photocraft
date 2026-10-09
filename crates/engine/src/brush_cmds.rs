@@ -595,20 +595,11 @@ fn name_param(p: &Value, cmd: &str) -> Result<String> {
     p.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty()).map(str::to_string).ok_or_else(|| bad(cmd, "missing `name`"))
 }
 
-/// Replace the preset of that name, or add it right after the preset the current brush was picked
-/// from (the brush it was copied from), or at the end when there is none.
+/// Replace the preset of that name, or append it at the end of the list.
 fn upsert(s: &mut Session, preset: BrushPreset) {
     match s.tools.presets.iter_mut().find(|x| x.name.eq_ignore_ascii_case(&preset.name)) {
         Some(x) => *x = preset,
-        None => {
-            let pos = s
-                .tools
-                .current_preset
-                .as_ref()
-                .and_then(|n| s.tools.presets.iter().position(|x| x.name.eq_ignore_ascii_case(n)))
-                .map_or(s.tools.presets.len(), |i| i + 1);
-            s.tools.presets.insert(pos, preset);
-        }
+        None => s.tools.presets.push(preset),
     }
     s.brush_presets_changed();
 }
@@ -746,15 +737,14 @@ fn define_from_selection(s: &mut Session, p: &Value) -> Result<Value> {
 pub(crate) fn set_brush(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "tools.setBrush";
     let mut b = s.tools.brush.clone();
+    let mut picked = None;
     if let Some(name) = p.get("preset").and_then(Value::as_str) {
         b = find_preset(s, name, cmd)?.brush.clone().picked_over(&s.tools.brush);
-        // The picked preset stays "the current brush" across later edits, so `brush.presets.update`
-        // knows what to overwrite.
-        s.tools.current_preset = Some(name.to_string());
+        picked = Some(name.to_string());
     }
-    if flag(p, "reset", false) {
+    let reset = flag(p, "reset", false);
+    if reset {
         b = BrushSettings::default();
-        s.tools.current_preset = None;
     }
     let mut patch = p.clone();
     if let Some(o) = patch.as_object_mut() {
@@ -771,6 +761,14 @@ pub(crate) fn set_brush(s: &mut Session, p: &Value) -> Result<Value> {
     }
     b = merge_brush(&b, &patch, cmd)?;
     validate_brush(&b, cmd)?;
+    // The picked preset stays "the current brush" across later edits, so `brush.presets.update`
+    // knows what to overwrite. Only once the brush is accepted: a failed call leaves no state
+    // behind (a `reset` wins over a `preset`, as it replaces the whole brush).
+    if reset {
+        s.tools.current_preset = None;
+    } else if let Some(name) = picked {
+        s.tools.current_preset = Some(name);
+    }
     // The tool's brush always paints with full tips: load a library preset's from the store.
     s.load_brush_tips(&mut b).map_err(|e| bad(cmd, e))?;
     let before = std::mem::replace(&mut s.tools.brush, b);

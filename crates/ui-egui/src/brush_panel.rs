@@ -300,12 +300,13 @@ fn settings_tab(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
             egui::ScrollArea::vertical().id_salt(("brush-section", section)).max_height(450.0).auto_shrink([false, false]).show(ui, |ui| {
                 ui.set_width(WIDTH - 204.0);
                 // A section that's off shows its options greyed out (Photoshop). A tip picked in
-                // the grid picks the whole preset: its sections show in the list, and the engine
-                // records it as the current preset (identity, so duplicates stay distinct). The
-                // tip-field diff commit_gesture sends afterwards is already applied: a no-op.
+                // the grid copies the tip fields only — the dynamics sections stay (Photoshop).
+                // The picked preset is recorded by name (`brush.presets.setCurrent`, identity, so
+                // look-alike duplicates stay distinct), since the engine can't infer it from the
+                // brush afterwards.
                 ui.add_enabled_ui(on, |ui| section_body(ui, &mut b, section, &app.session.tools.presets, app.session.tools.current_preset.as_deref()))
                     .inner
-                    .inspect(|name| run_or_status(app, "tools.setBrush", json!({ "preset": name })));
+                    .inspect(|name| run_or_status(app, "brush.presets.setCurrent", json!({ "name": name })));
             });
         });
     });

@@ -184,20 +184,20 @@ fn presets_save_load_delete_round_trip() {
 }
 
 #[test]
-fn new_presets_land_after_the_copied_brush_and_update_overwrites_in_place() {
+fn presets_save_appends_at_the_end_and_update_overwrites_in_place() {
     let mut s = session(10, 10);
     s.execute("tools.setBrush", json!({"preset": "Chalk"})).unwrap();
     assert_eq!(s.tools.current_preset.as_deref(), Some("Chalk"));
     let n = s.tools.presets.len();
     let chalk_at = s.tools.presets.iter().position(|p| p.name == "Chalk").unwrap();
-    // A new preset lands right after the preset the brush was picked from, not at the end.
+    // A new preset appends at the end, picked preset or not.
     s.execute("brush.presets.save", json!({"name": "Mine"})).unwrap();
-    assert_eq!(s.tools.presets[chalk_at + 1].name, "Mine");
-    // With no picked preset, it lands at the end.
-    s.execute("tools.setBrush", json!({"reset": true})).unwrap();
-    assert_eq!(s.tools.current_preset, None);
+    assert_eq!(s.tools.presets.last().unwrap().name, "Mine");
     s.execute("brush.presets.save", json!({"name": "Tail"})).unwrap();
     assert_eq!(s.tools.presets.last().unwrap().name, "Tail");
+    // A reset clears the picked preset.
+    s.execute("tools.setBrush", json!({"reset": true})).unwrap();
+    assert_eq!(s.tools.current_preset, None);
     // Editing the brush keeps the picked preset current; update overwrites it in place.
     s.execute("tools.setBrush", json!({"preset": "Chalk"})).unwrap();
     s.execute("tools.setBrush", json!({"size": 55})).unwrap();
@@ -221,6 +221,22 @@ fn new_presets_land_after_the_copied_brush_and_update_overwrites_in_place() {
     s.execute("brush.presets.delete", json!({"name": "Chalk"})).unwrap();
     assert_eq!(s.tools.current_preset, None);
     assert!(s.execute("brush.presets.update", json!({})).is_err());
+}
+
+#[test]
+fn a_failed_set_brush_leaves_no_current_preset_behind() {
+    let mut s = session(10, 10);
+    let before = s.tools.brush.clone();
+    // A rejected brush (a wrong-typed size) must not record the preset it came with.
+    assert!(s.execute("tools.setBrush", json!({"preset": "Chalk", "brush": {"size": "big"}})).is_err());
+    assert_eq!(s.tools.current_preset, None);
+    assert_eq!(s.tools.brush, before);
+    // Once the brush is accepted, the preset is recorded.
+    s.execute("tools.setBrush", json!({"preset": "Chalk"})).unwrap();
+    assert_eq!(s.tools.current_preset.as_deref(), Some("Chalk"));
+    // A `reset` wins over a `preset` in the same call.
+    s.execute("tools.setBrush", json!({"preset": "Chalk", "reset": true})).unwrap();
+    assert_eq!(s.tools.current_preset, None);
 }
 
 #[test]

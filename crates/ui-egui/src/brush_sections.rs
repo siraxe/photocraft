@@ -269,10 +269,11 @@ fn tip_grid(ui: &mut egui::Ui, id: &str, presets: &[BrushPreset], highlight: Opt
     clicked
 }
 
-/// The Brush Tip Shape section: the tip grid and the tip's own controls. Picking a tip selects
-/// the whole preset — the returned name goes to `tools.setBrush {"preset"}`, so its sections
-/// (Shape Dynamics, Dual Brush…) show in the list and look-alike duplicates stay distinct. The
-/// tip fields are also copied into the working brush so this frame's controls start from them.
+/// The Brush Tip Shape section: the tip grid and the tip's own controls. Picking a tip copies the
+/// tip fields only — the dynamics sections stay as they are (Photoshop). The clicked preset's name
+/// is returned so the caller can mark it current with `brush.presets.setCurrent` (by identity:
+/// look-alike duplicates stay distinct; the engine can't infer it from the brush). The tip fields
+/// are also copied into the working brush so this frame's controls start from them.
 fn tip_shape(ui: &mut egui::Ui, b: &mut BrushSettings, presets: &[BrushPreset], current: Option<&str>) -> Option<String> {
     let highlight = current.and_then(|n| presets.iter().position(|p| p.name.eq_ignore_ascii_case(n)));
     if let Some(p) = tip_grid(ui, "brush-tip-grid", presets, highlight).and_then(|i| presets.get(i)) {
