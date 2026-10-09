@@ -11,6 +11,11 @@
 //!   raw events on the root window and maps the tablet device's valuators ("Abs Pressure",
 //!   "Abs Tilt X/Y", "Abs Rotary Z") to samples. Raw events reach every client that asks, also
 //!   while winit holds the pointer grab of a drag. No `unsafe`.
+//! - **Windows**: the pen normally rides Windows Ink — winit turns `WM_POINTER` pen frames into
+//!   touch with a normalised force. When the driver serves Wintab instead (the Wacom driver's
+//!   "Use Windows Ink" checkbox off, read from its settings file by [`wacom`]), the desktop app
+//!   installs [`wintab::Monitor`], which subclasses the window and reads `WT_PACKET` pressure
+//!   (and the eraser end) into the same feed. Needs `unsafe` interop like the AppKit monitor.
 //! - **Wayland**: not covered. The `zwp_tablet_v2` protocol has to be bound on winit's own
 //!   `wl_display` connection (the tablet events name winit's `wl_surface`), which needs
 //!   `unsafe` foreign-display interop, and binding it makes compositors stop emulating the
@@ -31,6 +36,10 @@ pub mod xi;
 
 #[cfg(target_os = "macos")]
 pub mod macos;
+#[cfg(target_os = "windows")]
+pub mod wacom;
+#[cfg(target_os = "windows")]
+pub mod wintab;
 #[cfg(target_os = "linux")]
 pub mod x11;
 
