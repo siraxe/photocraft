@@ -1452,6 +1452,140 @@ mod tests {
         }
     }
 
+    fn deny_smart_object_paths(id: &str, params: &Value) -> photocraft_engine::Result<()> {
+        // The production policy lives in the automation crate. This gate exercises the control
+        // session's state-derived path check without adding that dependency to the UI crate.
+        if matches!(id, "layer.smartObjects.editContents" | "layer.smartObjects.convertToLayers" | "layer.smartObjects.saveContents")
+            && params.get("path").and_then(Value::as_str).is_some()
+        {
+            Err(photocraft_engine::EngineError::Other("ambient smart-object path denied".into()))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn smart_control_app() -> (PhotocraftApp, egui::Context, photocraft_doc::LayerId) {
+        let services = crate::Services {
+            automation_authorize: Some(deny_smart_object_paths),
+            automation_command: Some(Box::new(|id, params| deny_smart_object_paths(id, params).map_err(|e| e.to_string()))),
+            ..Default::default()
+        };
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), services);
+        app.run("file.new", json!({"width": 8, "height": 6, "background": "transparent"})).unwrap();
+        app.run("edit.fill", json!({"color": "#ff0000"})).unwrap();
+        let id = app.run("layer.smartObjects.convertToSmartObject", json!({})).unwrap()["layer"].as_u64().unwrap();
+        (app, egui::Context::default(), photocraft_doc::LayerId(id))
+    }
+
+    #[test]
+    fn control_edits_nested_embedded_smart_objects_and_converts_an_explicit_target() {
+        use photocraft_doc::{LayerContent, SmartSource};
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        use std::sync::Arc;
+
+        let (mut app, ctx, smart) = smart_control_app();
+        // Embed this one-smart-layer document inside the outer object: two Edit Contents
+        // requests must reach the raster layer, as in a nested product-photo template.
+        let nested = photocraft_engine::smart_cmds::encode_source(&app.session.active().unwrap().doc).unwrap();
+        app.session
+            .edit("Nested fixture", |doc, _| {
+                let LayerContent::Smart(sm) = &mut doc.layer_mut(smart).unwrap().content else { panic!("smart fixture") };
+                sm.source = SmartSource::Embedded { file_name: "product.pcraft".into(), bytes: Arc::new(nested) };
+                Ok(())
+            })
+            .unwrap();
+        let other = app.run("layer.new.layer", json!({"name": "Unrelated"})).unwrap()["layer"].as_u64().unwrap();
+        assert_ne!(app.session.active().unwrap().active_layer, Some(smart));
+        for expected_document in [1, 2] {
+            let r = call(&mut app, &ctx, "engine.execute", json!({"command": "layer.smartObjects.editContents", "params": {"layer": smart.0}}));
+            assert_eq!(r["ok"], true, "{r}");
+            assert_eq!(r["result"]["document"], expected_document, "{r}");
+            assert!(app.session.active().unwrap().path.is_none(), "contents open in memory");
+            assert!(app.session.authorize.is_none(), "the request gate must not remain installed");
+        }
+        let r = call(&mut app, &ctx, "engine.execute", json!({"command": "edit.fill", "params": {"color": "#0000ff"}}));
+        assert_eq!(r["ok"], true, "{r}");
+        for expected_documents in [2, 1] {
+            let r = call(&mut app, &ctx, "engine.execute", json!({"command": "layer.smartObjects.saveContents"}));
+            assert_eq!(r["ok"], true, "{r}");
+            let r = call(&mut app, &ctx, "engine.execute", json!({"command": "file.close"}));
+            assert_eq!(r["ok"], true, "{r}");
+            assert_eq!(app.session.documents().len(), expected_documents);
+        }
+        assert_eq!(app.session.active().unwrap().active_layer, Some(photocraft_doc::LayerId(other)));
+        assert_eq!(photocraft_compose::flatten(&app.session.active().unwrap().doc).px[0], [0.0, 0.0, 1.0, 1.0]);
+        let r = call(&mut app, &ctx, "engine.execute", json!({"command": "layer.smartObjects.convertToLayers", "params": {"layer": smart.0}}));
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(app.session.active().unwrap().doc.layer(photocraft_doc::LayerId(other)).is_some(), "the unrelated active layer remains");
+        assert!(app.session.authorize.is_none());
+
+        let written = Rc::new(RefCell::new(Vec::new()));
+        let output = written.clone();
+        app.services.export =
+            Some(Box::new(|doc, _, _| photocraft_engine::smart_cmds::encode_source(doc).map(|bytes| (bytes, Vec::new())).map_err(|e| e.to_string())));
+        app.services.automation_write = Some(Box::new(move |path, bytes| {
+            output.borrow_mut().push((path.to_string(), bytes.to_vec()));
+            Ok(())
+        }));
+        app.services.write = Some(Box::new(|_, _| Err("ambient writer used".into())));
+        let r = call(&mut app, &ctx, "app.save", json!({"path": "out/template.pcraft"}));
+        assert_eq!(r["ok"], true, "{r}");
+        let written = written.borrow();
+        assert_eq!(written.len(), 1);
+        assert_eq!(written[0].0, "out/template.pcraft");
+        let saved = photocraft_engine::smart_cmds::decode_source(&written[0].0, &written[0].1).unwrap();
+        assert_eq!(photocraft_compose::flatten(&saved).px[0], [0.0, 0.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn control_refuses_linked_smart_objects_in_commands_and_actions_but_local_editing_still_works() {
+        use photocraft_doc::{LayerContent, SmartSource};
+        use std::sync::Arc;
+
+        let (mut app, ctx, smart) = smart_control_app();
+        let path = std::env::temp_dir().join(format!("pc-control-smart-linked-{}.pcraft", std::process::id()));
+        let st = app.session.active().unwrap();
+        let LayerContent::Smart(sm) = &st.doc.layer(smart).unwrap().content else { panic!("smart fixture") };
+        let SmartSource::Embedded { bytes, .. } = &sm.source else { panic!("embedded fixture") };
+        std::fs::write(&path, bytes.as_slice()).unwrap();
+        app.session
+            .edit("Linked fixture", |doc, _| {
+                let LayerContent::Smart(sm) = &mut doc.layer_mut(smart).unwrap().content else { panic!("smart fixture") };
+                sm.source = SmartSource::Linked { path: path.to_string_lossy().into_owned() };
+                Ok(())
+            })
+            .unwrap();
+        app.run("layer.new.layer", json!({"name": "Unrelated"})).unwrap();
+        let before = app.session.active().unwrap().doc.clone();
+        let active = app.session.active().unwrap().active_layer;
+        for command in ["layer.smartObjects.editContents", "layer.smartObjects.convertToLayers"] {
+            let r = call(&mut app, &ctx, "engine.execute", json!({"command": command, "params": {"layer": smart.0}}));
+            assert_eq!(r["ok"], false, "{r}");
+            assert!(r["error"].as_str().unwrap().contains("ambient smart-object path denied"), "{r}");
+            app.session.actions.list =
+                vec![photocraft_engine::actions_cmds::Action { name: "Linked contents".into(), steps: vec![(command.into(), json!({"layer": smart.0}))] }];
+            let r = call(&mut app, &ctx, "engine.execute", json!({"command": "actions.play", "params": {"action": "Linked contents"}}));
+            assert_eq!(r["ok"], true, "{r}");
+            assert_eq!(r["result"]["ran"], 0, "{r}");
+            assert_eq!(r["result"]["failed"]["id"], command, "{r}");
+            assert_eq!(app.session.documents().len(), 1);
+            assert!(Arc::ptr_eq(&app.session.active().unwrap().doc, &before), "a refused operation must not edit the document");
+            assert_eq!(app.session.active().unwrap().active_layer, active);
+            assert!(app.session.authorize.is_none(), "a refused request must restore the local session");
+        }
+        // A synthetic thumbnail action uses the same temporary authorization as control calls.
+        app.automation_input = true;
+        let error = crate::menus::invoke(&mut app, &ctx, "layer.smartObjects.editContents", json!({"layer": smart.0})).unwrap_err();
+        assert!(error.contains("ambient smart-object path denied"), "{error}");
+        assert!(app.session.authorize.is_none());
+        app.automation_input = false;
+        app.run("layer.smartObjects.editContents", json!({"layer": smart.0})).unwrap();
+        assert_eq!(app.session.documents().len(), 2, "a human can still open the existing linked file");
+        assert_eq!(photocraft_compose::flatten(&app.session.active().unwrap().doc).px[0], [1.0, 0.0, 0.0, 1.0]);
+        std::fs::remove_file(path).unwrap();
+    }
+
     #[test]
     fn actions_play_checks_each_step_over_control() {
         let services = crate::Services { automation_authorize: Some(deny_ambient_file), ..Default::default() };

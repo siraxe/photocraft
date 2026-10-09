@@ -106,11 +106,16 @@ fn fill_of(l: &Layer) -> Option<&Fill> {
 fn edited_fill(app: &PhotocraftApp, layer: &Layer, canvas: Rect32, cmd: &str, p: &Value) -> Option<Fill> {
     let f = fill_of(layer)?;
     let (fg, bg) = (app.session.tools.foreground, app.session.tools.background);
-    match cmd {
+    let edited = match cmd {
         cmds::SET => cmds::apply_set(layer, f, canvas, p, fg, bg).ok(),
         cmds::STOP => cmds::apply_stop(f, p, fg, bg).ok(),
         _ => None,
-    }
+    }?;
+    // As the command commits it: colours in the document's mode.
+    Some(match app.session.active() {
+        Some(st) => edited.in_mode(st.doc.mode),
+        None => edited,
+    })
 }
 
 /// Options-bar params of a new live gradient.

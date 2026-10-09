@@ -218,7 +218,7 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
         vec![(ButtonRole::Default, "Yes", Some(Key::Y), 84.0, Answer::Save), (ButtonRole::Alternate, "No", Some(Key::N), 84.0, Answer::Discard), cancel]
     };
     let mut answer = ctx.input_mut(|i| buttons.iter().find(|b| b.2.is_some_and(|k| i.consume_key(egui::Modifiers::NONE, k))).map(|b| b.4));
-    let labels: Vec<String> = buttons.iter().map(|b| b.2.map_or_else(|| tl!(b.1).to_string(), |k| mnemonic(b.1, k))).collect();
+    let labels: Vec<String> = buttons.iter().map(|b| button_label(mac, b.1, b.2)).collect();
     let row: Vec<DialogButton> = buttons.iter().zip(&labels).map(|(b, label)| DialogButton::new(b.0, label, b.3)).collect();
     let modal = egui::Modal::new(egui::Id::new("discard-prompt")).show(ctx, |ui| {
         ui.set_max_width(420.0);
@@ -255,6 +255,11 @@ enum Answer {
     Save,
     Discard,
     Cancel,
+}
+
+/// macOS keeps the plain button wording even though the keyboard shortcuts still work.
+fn button_label(mac: bool, label: &str, key: Option<Key>) -> String {
+    if mac { tl!(label).to_string() } else { key.map_or_else(|| tl!(label).to_string(), |k| mnemonic(label, k)) }
 }
 
 /// "(S)ave": the key in parentheses, or appended ("Guardar (S)") when the translation doesn't start with it.
@@ -459,9 +464,16 @@ mod tests {
     }
 
     #[test]
+    fn macos_hides_mnemonics_but_other_platforms_keep_them() {
+        assert_eq!(button_label(true, "Don't Save", Some(Key::D)), tl!("Don't Save"));
+        assert_eq!(button_label(true, "Cancel", Some(Key::C)), tl!("Cancel"));
+        assert_eq!(button_label(false, "Don't Save", Some(Key::D)), "(D)on't Save");
+    }
+
+    #[test]
     fn macos_asks_dont_save_cancel_save_with_the_default_last() {
         let mut h = prompt_on(egui::os::OperatingSystem::Mac);
-        let labels = ["(D)on't Save", "(C)ancel", "(S)ave"];
+        let labels = ["Don't Save", "Cancel", "Save"];
         assert_eq!(drawn_order(&h, labels), labels);
         tab_walks(&mut h, labels);
         h.key_press(Key::D);
@@ -471,6 +483,23 @@ mod tests {
         h.run_steps(2);
         assert!(h.state().discard.is_none());
         assert_eq!(h.state().session.documents().len(), 2, "Cancel closed nothing");
+    }
+
+    #[test]
+    fn macos_plain_labels_keep_save_and_escape_shortcuts() {
+        for key in [Key::S, Key::Enter] {
+            let mut h = prompt_on(egui::os::OperatingSystem::Mac);
+            let (show, asked) = crate::file_dialog::fake(vec![None]);
+            h.state_mut().services.file_dialog = Some(show);
+            h.key_press(key);
+            h.run_steps(2);
+            assert_eq!(asked.borrow().len(), 1, "{key:?} opens the save dialog");
+            assert_eq!(docs_left(&h), Some(2), "cancelling the save dialog keeps the prompt");
+            h.key_press(Key::Escape);
+            h.run_steps(2);
+            assert!(h.state().discard.is_none());
+            assert_eq!(h.state().session.documents().len(), 2, "Escape closed nothing");
+        }
     }
 
     #[test]

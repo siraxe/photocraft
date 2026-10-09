@@ -24,6 +24,8 @@
 	Layer	Calque
 	Type	Texte
 	Select	Sélection
+	Selected	Sélectionnés
+	Scope	Portée
 	Top Left	En haut à gauche
 	Top Right	En haut à droite
 	Bottom Left	En bas à gauche

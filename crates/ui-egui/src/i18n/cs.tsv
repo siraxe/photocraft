@@ -25,6 +25,8 @@
 	Layer	Vrstva
 	Type	Text
 	Select	Výběr
+	Selected	Vybrané
+	Scope	Rozsah
 	Top Left	Vlevo nahoře
 	Top Right	Vpravo nahoře
 	Bottom Left	Vlevo dole

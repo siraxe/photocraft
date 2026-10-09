@@ -17,6 +17,8 @@
 	Layer	Capa
 	Type	Texto
 	Select	Selección
+	Selected	Seleccionadas
+	Scope	Alcance
 	Top Left	Superior izquierda
 	Top Right	Superior derecha
 	Bottom Left	Inferior izquierda

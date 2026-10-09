@@ -24,6 +24,8 @@
 	Layer	Warstwa
 	Type	Tekst
 	Select	Zaznaczenie
+	Selected	Zaznaczone
+	Scope	Zakres
 	Filter	Filtr
 	View	Widok
 	Window	Okno

@@ -51,6 +51,10 @@ struct Ex {
     next_id: u32,
     /// PSD ids assigned to document layers (kept from `psd_id` when unique).
     layer_ids: std::collections::HashMap<photocraft_doc::LayerId, u32>,
+    /// The generated `Txt2` object number of each type layer (a preserved `TySh` keeps its own
+    /// `TextIndex`, others get the next free number; see `photocraft_text::psd::build_txt2`),
+    /// written into the `TySh` data this export re-serializes.
+    text_index: std::collections::HashMap<photocraft_doc::LayerId, i32>,
     canvas: photocraft_geom::Rect,
     records: Vec<LayerRecord>,
     warnings: Vec<String>,
@@ -475,7 +479,16 @@ impl Ex {
                 let src = t.psd_raw.as_ref().or(generated.as_ref());
                 // Character/paragraph style sheets from the document's styles.
                 let styled = src.and_then(|d| crate::text_styles_map::export_tysh(d, t, &self.text_styles, self.dpi)).map(std::sync::Arc::new);
-                set_principal(&mut raw, &[b"TySh"], styled.as_ref().or(src));
+                // `TextIndex` names the layer's object in the document's `Txt2` (where the
+                // auto-kern mode lives); left at 0, every type layer would claim object 0 (#1348).
+                // Keep an unchanged preserved TySh byte-for-byte (corpus_tysh_lossless).
+                // Duplicate or out-of-range file TextIndex values must be renumbered,
+                // however, even when no style sheet needed rebuilding: otherwise two
+                // layers may read the same Txt2 object and acquire the wrong kerning.
+                let idx = self.text_index.get(&l.id).copied().unwrap_or(0);
+                let rewrite = styled.as_ref().or(generated.as_ref()).or_else(|| src.filter(|d| photocraft_text::psd::text_index(d.as_slice()) != Some(idx)));
+                let fresh = rewrite.and_then(|d| photocraft_text::psd::set_text_index(d.as_slice(), idx)).map(std::sync::Arc::new);
+                set_principal(&mut raw, &[b"TySh"], fresh.as_ref().or(styled.as_ref().or(src)));
                 if !raw.iter().any(|(k, _)| k == b"TySh") {
                     self.warnings.push(format!("layer \"{}\": text layer written as pixels (no TySh data)", l.name));
                 }
@@ -1119,6 +1132,7 @@ fn document_to_psd_nested(doc: &Document, opts: &PsdExportOptions, depth: u32) -
         fmt,
         dpi: doc.resolution_dpi,
         text_styles: doc.text_styles.clone(),
+        text_index: Default::default(),
         mask_fmt: PixelFormat::new(ColorMode::Grayscale, sample, false),
         cc,
         cmyk: fmt.mode == ColorMode::Cmyk,
@@ -1163,6 +1177,29 @@ fn document_to_psd_nested(doc: &Document, opts: &PsdExportOptions, depth: u32) -
             }
         }
         ex.next_id = used.iter().copied().max().unwrap_or(0);
+        // Text objects' number in the generated `Txt2` (#1348): a preserved `TySh` keeps the
+        // number it already names — its `Txt2` object must sit at that slot for `apply_txt2` —
+        // and new layers get the next free number.
+        let mut used_txt = std::collections::HashSet::new();
+        let mut next_txt = 0i32;
+        ex.text_index = Default::default();
+        for (_, _, l) in &walk {
+            let LayerContent::Text(t) = &l.content else {
+                continue;
+            };
+            let kept = t.psd_raw.as_deref().and_then(|d| photocraft_text::psd::text_index(d));
+            let index = match kept {
+                Some(i) if used_txt.insert(i) => i,
+                _ => {
+                    while used_txt.contains(&next_txt) {
+                        next_txt += 1;
+                    }
+                    used_txt.insert(next_txt);
+                    next_txt
+                }
+            };
+            ex.text_index.insert(l.id, index);
+        }
     }
     ex.emit(&doc.layers);
 
@@ -1281,13 +1318,38 @@ fn document_to_psd_nested(doc: &Document, opts: &PsdExportOptions, depth: u32) -
         resources.push(ImageResource::new(ids::EXIF, photocraft_codecs::export_exif(e, ppi).into_owned()));
     }
     let mut global_blocks = Vec::new();
-    for (sig, key, data) in &ex.smart.finish(crate::annotations_map::export_blocks(doc, crate::pattern_map::export_global_blocks(doc))) {
-        let mut tb = TaggedBlock::new(*key, data.to_vec());
-        tb.signature = *sig;
+    let preserved = ex.smart.finish(crate::annotations_map::export_blocks(doc, crate::pattern_map::export_global_blocks(doc)));
+    // The type layers' `Txt2` is regenerated (the auto-kern modes live there, and a preserved
+    // block goes stale as text is edited): one object per `TextIndex`, at the slot each layer's
+    // `TySh` names (unused slots stay empty; see `photocraft_text::psd::build_txt2`). The block
+    // it replaces is handed over so a kept object keeps everything the file held beyond its text
+    // and style runs (Photoshop's `/21 /1` glyph pen positions, …).
+    let text_layers: Vec<(i32, &photocraft_doc::TextLayer)> = doc
+        .walk()
+        .into_iter()
+        .filter_map(|(_, _, l)| match &l.content {
+            LayerContent::Text(t) => Some((ex.text_index.get(&l.id).copied().unwrap_or(0), t)),
+            _ => None,
+        })
+        .collect();
+    let previous = (!text_layers.is_empty()).then(|| preserved.iter().find(|(_, key, _)| key == b"Txt2").map(|(_, _, data)| data.to_vec())).flatten();
+    let txt2 = (!text_layers.is_empty()).then(|| photocraft_text::psd::build_txt2(&text_layers, previous.as_deref()));
+    for (sig, key, data) in preserved {
+        if txt2.is_some() && key == *b"Txt2" {
+            continue;
+        }
+        let mut tb = TaggedBlock::new(key, data.to_vec());
+        tb.signature = sig;
         // Photoshop pads document-level (global) blocks to a multiple of 4, and readers such as
         // psd-tools step to the next block that way: an even pad after `CAI ` (77 bytes)
         // misaligned every block after it (#200).
         tb.padding = Some(vec![0; (4 - data.len() % 4) % 4]);
+        global_blocks.push(tb);
+    }
+    if let Some(txt2) = txt2 {
+        let mut tb = TaggedBlock::new(*b"Txt2", txt2.clone());
+        tb.signature = *b"8BIM";
+        tb.padding = Some(vec![0; (4 - txt2.len() % 4) % 4]);
         global_blocks.push(tb);
     }
     let comps_resource = ex.comps.is_some().then(|| crate::comps_map::write_comps_resource(doc));

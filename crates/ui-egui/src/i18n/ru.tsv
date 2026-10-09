@@ -24,6 +24,8 @@
 	Layer	Слой
 	Type	Текст
 	Select	Выделение
+	Selected	Выбранные
+	Scope	Область
 	Top Left	Верхний левый
 	Top Right	Верхний правый
 	Bottom Left	Нижний левый

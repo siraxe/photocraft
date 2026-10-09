@@ -128,6 +128,17 @@ UI-level commands (`view.zoomIn`, `window.theme.pro`, `edit.search`, …) are al
 
 Commands that read or write files by path, instead of through the automation roots, are refused with "automation command `…` uses ambient filesystem paths and is disabled; use capability-scoped document methods". That covers every `file.*` command except `file.new`, the `file.close*` commands and a few path-free ones such as `file.fileInfo`, so `file.open`, `file.save`, `file.saveAs` and `file.saveACopy` always fail here: open and save with `app.open` / `app.save`. Path parameters of other commands (`layer.exportAs {path}`, `filter.distort.displace {mapPath}`, preset imports, and plug-in install/reload) are refused the same way. `prefs.set` rejects whole-preference updates and file-backed sections (`colorSettings`, `scriptEvents`, `historyLog`, `plugIns` and `scratchDisks`) so automation cannot configure ambient file access indirectly. The desktop app also refuses `image.mode.*`, which can load the colour profiles set in its preferences. The rules are in `crates/automation/src/workspace.rs`.
 
+Embedded Smart Objects can be opened with `layer.smartObjects.editContents {layer?}` or
+unpacked with `layer.smartObjects.convertToLayers {layer?}`. This includes Photoshop sources
+stored by UUID in the document's embedded linked-layer blocks. Sources requiring a disk read
+remain refused, including nested linked objects that need re-rendering during unpacking.
+In the opened contents document, use `layer.smartObjects.saveContents {}` to update the parent
+in memory, or close the dirty contents document. For nested objects, save from the deepest
+contents outward. `app.save` exports the active document to a scoped file; it is not a substitute
+for Save Contents. Save the parent document to disk when the edits are complete. These rules
+also apply to recorded actions and synthetic UI input; interactive desktop commands retain
+their usual file access. Source replacement, relinking and export commands remain restricted.
+
 `type.editText` starts inline editing of the active type layer and selects all its text, like
 double-clicking its thumbnail in Layers. Text input, Commit and Cancel use the existing Type tool
 editing session; non-type layers return an error without changing the tool or document.

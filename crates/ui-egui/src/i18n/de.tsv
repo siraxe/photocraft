@@ -21,6 +21,8 @@
 	Layer	Ebene
 	Type	Text
 	Select	Auswahl
+	Selected	Ausgewählt
+	Scope	Umfang
 	Top Left	Oben links
 	Top Right	Oben rechts
 	Bottom Left	Unten links

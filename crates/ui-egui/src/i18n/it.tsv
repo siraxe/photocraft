@@ -17,6 +17,8 @@
 	Layer	Livello
 	Type	Testo
 	Select	Selezione
+	Selected	Selezionati
+	Scope	Ambito
 	Top Left	In alto a sinistra
 	Top Right	In alto a destra
 	Bottom Left	In basso a sinistra

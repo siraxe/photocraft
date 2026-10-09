@@ -13,6 +13,8 @@
 	Layer	레이어
 	Type	문자
 	Select	선택
+	Selected	선택됨
+	Scope	범위
 	Filter	필터
 	View	보기
 	Window	창

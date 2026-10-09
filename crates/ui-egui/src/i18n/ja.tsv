@@ -21,6 +21,8 @@
 	Layer	レイヤー
 	Type	文字
 	Select	選択
+	Selected	選択済み
+	Scope	範囲
 	Top Left	左上
 	Top Right	右上
 	Bottom Left	左下

@@ -25,6 +25,8 @@
 	Layer	圖層
 	Type	文字
 	Select	選取
+	Selected	已選取
+	Scope	範圍
 	Top Left	左上
 	Top Right	右上
 	Bottom Left	左下
