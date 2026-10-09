@@ -595,10 +595,20 @@ fn name_param(p: &Value, cmd: &str) -> Result<String> {
     p.get("name").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty()).map(str::to_string).ok_or_else(|| bad(cmd, "missing `name`"))
 }
 
+/// Replace the preset of that name, or add it right after the preset the current brush was picked
+/// from (the brush it was copied from), or at the end when there is none.
 fn upsert(s: &mut Session, preset: BrushPreset) {
     match s.tools.presets.iter_mut().find(|x| x.name.eq_ignore_ascii_case(&preset.name)) {
         Some(x) => *x = preset,
-        None => s.tools.presets.push(preset),
+        None => {
+            let pos = s
+                .tools
+                .current_preset
+                .as_ref()
+                .and_then(|n| s.tools.presets.iter().position(|x| x.name.eq_ignore_ascii_case(n)))
+                .map_or(s.tools.presets.len(), |i| i + 1);
+            s.tools.presets.insert(pos, preset);
+        }
     }
     s.brush_presets_changed();
 }
@@ -622,8 +632,34 @@ fn presets_delete(s: &mut Session, p: &Value) -> Result<Value> {
     if s.tools.presets.len() == before {
         return Err(bad(cmd, format!("no brush preset named `{name}`")));
     }
+    if s.tools.current_preset.as_ref().is_some_and(|c| c.eq_ignore_ascii_case(&name)) {
+        s.tools.current_preset = None;
+    }
     s.brush_presets_changed();
     Ok(json!({ "count": s.tools.presets.len() }))
+}
+
+/// Overwrite an existing preset with the current brush (or the current brush plus a `brush`
+/// patch), in place: no new preset, the position, name and group stay. The preset defaults to the
+/// one the current brush was picked from. A built-in that is updated becomes the user's preset
+/// (built-ins regenerate with their factory settings).
+fn presets_update(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "brush.presets.update";
+    let name = match p.get("name").filter(|v| !v.is_null()) {
+        Some(_) => name_param(p, cmd)?,
+        None => s.tools.current_preset.clone().ok_or_else(|| bad(cmd, "the current brush was not picked from a preset"))?,
+    };
+    let brush = match p.get("brush").filter(|v| v.is_object()) {
+        Some(patch) => merge_brush(&s.tools.brush, patch, cmd)?,
+        None => s.tools.brush.clone(),
+    };
+    let i = s.tools.presets.iter().position(|x| x.name.eq_ignore_ascii_case(&name)).ok_or_else(|| bad(cmd, format!("no brush preset named `{name}`")))?;
+    let pr = &mut s.tools.presets[i];
+    pr.brush = brush;
+    pr.builtin = false;
+    let (name, group) = (pr.name.clone(), pr.group.clone());
+    s.brush_presets_changed();
+    Ok(json!({ "name": name, "group": group }))
 }
 
 fn has_selection_and_pixels(s: &Session) -> std::result::Result<(), String> {
@@ -688,6 +724,7 @@ fn define_from_selection(s: &mut Session, p: &Value) -> Result<Value> {
     let brush = BrushSettings { tip: TipShape::Sampled(tip), size: tw.max(th) as f32, spacing: 0.25, pressure_size: false, ..BrushSettings::default() };
     upsert(s, BrushPreset { name: name.clone(), brush: brush.clone(), builtin: false, group: String::new(), folder: Vec::new() });
     s.tools.brush = brush;
+    s.tools.current_preset = Some(name.clone());
     Ok(json!({ "name": name, "width": tw, "height": th }))
 }
 
@@ -696,9 +733,13 @@ pub(crate) fn set_brush(s: &mut Session, p: &Value) -> Result<Value> {
     let mut b = s.tools.brush.clone();
     if let Some(name) = p.get("preset").and_then(Value::as_str) {
         b = find_preset(s, name, cmd)?.brush.clone().picked_over(&s.tools.brush);
+        // The picked preset stays "the current brush" across later edits, so `brush.presets.update`
+        // knows what to overwrite.
+        s.tools.current_preset = Some(name.to_string());
     }
     if flag(p, "reset", false) {
         b = BrushSettings::default();
+        s.tools.current_preset = None;
     }
     let mut patch = p.clone();
     if let Some(o) = patch.as_object_mut() {
@@ -835,6 +876,14 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         spec!("brush.presets.list", "List Brush Presets", r##"{"full":bool=false}"##, always, presets_list, false),
         spec!("brush.presets.save", "Save Brush Preset", r##"{"name":string,"brush":{…BrushSettings}?=current brush}"##, always, presets_save, true),
+        spec!(
+            "brush.presets.update",
+            "Update Brush Preset",
+            r##"{"name":string?=the preset the current brush was picked from,"brush":{…BrushSettings}?=current brush}"##,
+            always,
+            presets_update,
+            true
+        ),
         spec!("brush.presets.delete", "Delete Brush Preset", r##"{"name":string}"##, always, presets_delete, true),
         spec!("brush.defineFromSelection", "Define Brush Preset…", r##"{"name":string}"##, has_selection_and_pixels, define_from_selection, true),
         spec!("brush.get", "Get Brush", "{}", always, |s, _| Ok(brush_json(&s.tools.brush)), false),

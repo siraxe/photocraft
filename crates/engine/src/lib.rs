@@ -252,6 +252,10 @@ pub struct ToolState {
     /// The coalescing key of the running `tools.setBrush` gesture and the brush before it, so the
     /// gesture journals as one call ([`brush_cmds::coalesce_journal`]).
     pub brush_gesture: Option<(String, photocraft_paint::BrushSettings)>,
+    /// Name of the preset the current brush was last picked from. Kept across later edits (the
+    /// preset stays "the current brush" so `brush.presets.update` can overwrite it); cleared when
+    /// the brush is reset or the preset is gone.
+    pub current_preset: Option<String>,
 }
 
 impl Default for ToolState {
@@ -268,6 +272,7 @@ impl Default for ToolState {
             presets_rev: 0,
             mixer: Default::default(),
             brush_gesture: None,
+            current_preset: None,
         }
     }
 }

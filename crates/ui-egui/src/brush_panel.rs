@@ -337,6 +337,19 @@ fn settings_tab(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
             if icons::button(ui, "undo-2", 24.0, false, tl!("Reset the brush to the defaults")).clicked() {
                 b = BrushSettings { color: b.color, background: b.background, smoothing: b.smoothing.clone(), locks: b.locks.clone(), ..Default::default() };
             }
+            // Overwrite the preset the current brush was picked from (Photoshop's "update the
+            // selected brush"): no new preset, the brush keeps its place in the list.
+            let current = app
+                .session
+                .tools
+                .current_preset
+                .clone()
+                .filter(|n| app.session.tools.presets.iter().any(|p| p.name.eq_ignore_ascii_case(n)));
+            let update = ui.add_enabled_ui(current.is_some(), |ui| icons::button(ui, "check", 24.0, false, tl!("Update the current brush with these settings"))).inner;
+            update.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, current.is_some(), "Update the current brush with these settings"));
+            if update.clicked() {
+                run_or_status(app, "brush.presets.update", json!({ "brush": serde_json::to_value(&b).unwrap_or(Value::Null) }));
+            }
         });
     });
     commit_gesture(app, ui.ctx(), &before, &b);
