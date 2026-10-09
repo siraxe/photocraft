@@ -101,10 +101,10 @@ pub fn canvas_buttons(app: &mut PhotocraftApp, response: &Response, tool: Tool) 
     // after most pen right-clicks (#943). The gestures that own the right button — Alt resize,
     // ⌘/Ctrl layer menu, Erase — keep the release-based behaviour.
     let resize_gesture = crate::brush_resize::applies(tool) && crate::brush_resize::is_right_gesture(crate::workspace_ui::sticky_mods(app, mods));
-    // A right press over the canvas (a press on the open picker is the picker's, not the canvas's).
-    let right_press = response.ctx.input(|i| i.pointer.button_pressed(PointerButton::Secondary))
-        && response.ctx.input(|i| i.pointer.interact_pos().is_some_and(|p| response.rect.contains(p)));
-    let right_open = right_press && !resize_gesture && !resizing && !layer_menu && !erase;
+    // Only a press on the canvas itself: `contains_pointer` is false under a floating panel over
+    // it, and a stroke in progress owns the barrel.
+    let right_press = response.ctx.input(|i| i.pointer.button_pressed(PointerButton::Secondary)) && response.contains_pointer();
+    let right_open = right_press && app.drag.is_none() && !resize_gesture && !resizing && !layer_menu && !erase;
     if right_open
         && has_brush_picker(tool)
         && let Some(p) = response.interact_pointer_pos()
@@ -196,6 +196,11 @@ mod tests {
     use crate::canvas::{ToolEvent, tool_event};
 
     fn harness(prefs: Option<&str>) -> Harness<'static, PhotocraftApp> {
+        harness_with(prefs, false)
+    }
+
+    /// `panel`: a floating panel (`egui::Area`) over the canvas centre, as the app's windows are.
+    fn harness_with(prefs: Option<&str>, panel: bool) -> Harness<'static, PhotocraftApp> {
         let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
         app.run("file.new", json!({"width": 400, "height": 300})).unwrap();
         app.run("layer.new.layer", json!({})).unwrap();
@@ -207,12 +212,19 @@ mod tests {
         app.ui.tool = Tool::Brush;
         app.sync_views();
         let mut h = Harness::builder().with_size(vec2(1200.0, 800.0)).with_step_dt(1.0 / 60.0).build_ui_state(
-            |ui, app: &mut PhotocraftApp| {
+            move |ui, app: &mut PhotocraftApp| {
                 let ctx = ui.ctx().clone();
                 if !ctx.fonts(|f| f.families().contains(&egui::FontFamily::Name("medium".into()))) {
                     return;
                 }
                 egui::CentralPanel::default().show(ui, |ui| crate::canvas::document_area(app, ui));
+                if panel {
+                    let at = app.last_canvas_rect.center();
+                    egui::Area::new(egui::Id::new("test-panel")).order(egui::Order::Middle).fixed_pos(at - vec2(100.0, 75.0)).show(ui.ctx(), |ui| {
+                        ui.set_min_size(egui::vec2(200.0, 150.0));
+                        ui.label("Panel");
+                    });
+                }
             },
             app,
         );
@@ -346,6 +358,52 @@ mod tests {
         press(&mut h, far, PointerButton::Primary, true);
         press(&mut h, far, PointerButton::Primary, false);
         assert_eq!(h.state().ui.brush_picker, None);
+    }
+
+    /// The press must land on the canvas: over a floating panel it opens nothing.
+    #[test]
+    fn right_press_on_a_floating_panel_over_the_canvas_does_not_open_the_picker() {
+        let mut h = harness_with(None, true);
+        let c = h.state().last_canvas_rect.center();
+        h.event(egui::Event::PointerMoved(c));
+        h.run_steps(1);
+        press(&mut h, c, PointerButton::Secondary, true);
+        assert_eq!(h.state().ui.brush_picker, None, "the press was on the panel, not the canvas");
+        press(&mut h, c, PointerButton::Secondary, false);
+        // Bare canvas beside the panel opens it as usual.
+        let bare = c + vec2(140.0, 0.0);
+        h.event(egui::Event::PointerMoved(bare));
+        h.run_steps(1);
+        press(&mut h, bare, PointerButton::Secondary, true);
+        assert_eq!(h.state().ui.brush_picker, Some([bare.x, bare.y]));
+        press(&mut h, bare, PointerButton::Secondary, false);
+    }
+
+    /// The barrel pressed mid-stroke must not pop the picker over the stroke.
+    #[test]
+    fn right_press_mid_stroke_does_not_open_the_picker() {
+        let mut h = harness(None);
+        let a = h.state().last_canvas_rect.center() - vec2(80.0, 0.0);
+        h.event(egui::Event::PointerMoved(a));
+        h.run_steps(1);
+        press(&mut h, a, PointerButton::Primary, true);
+        let mid = a + vec2(80.0, 0.0);
+        h.event(egui::Event::PointerMoved(mid));
+        h.run_steps(1);
+        assert!(h.state().drag.is_some(), "a stroke is in progress");
+        press(&mut h, mid, PointerButton::Secondary, true);
+        assert_eq!(h.state().ui.brush_picker, None, "a right press mid-stroke opens nothing");
+        press(&mut h, mid, PointerButton::Secondary, false);
+        // The stroke commits untouched, and a later right press opens the picker as usual.
+        let b = a + vec2(160.0, 0.0);
+        h.event(egui::Event::PointerMoved(b));
+        h.run_steps(1);
+        press(&mut h, b, PointerButton::Primary, false);
+        assert_eq!(strokes(&h).len(), 1);
+        h.event(egui::Event::PointerMoved(b));
+        h.run_steps(1);
+        press(&mut h, b, PointerButton::Secondary, true);
+        assert_eq!(h.state().ui.brush_picker, Some([b.x, b.y]));
     }
 
     /// #1031: the right-click picker picks brushes, not just the size. A click picks a preset and

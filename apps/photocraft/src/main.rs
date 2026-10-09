@@ -462,7 +462,7 @@ fn main() -> eframe::Result {
                 // subclass proc then reads WT_PACKET. The env var beats the checkbox; with Ink on,
                 // winit already reports the pressure as touch force, so the reader stays off.
                 let var = |k: &str| std::env::var(k).ok();
-                let use_ink = photocraft_tablet::wacom::load(None).map(|pen| pen.use_ink);
+                let use_ink = photocraft_tablet::wacom::windows_ink(None);
                 if tablet::wintab_wanted(var, use_ink) {
                     use eframe::wgpu::rwh::HasWindowHandle;
                     let hwnd = cc.window_handle().ok().and_then(|h| match h.as_raw() {

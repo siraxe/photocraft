@@ -5,7 +5,7 @@
 //! into the UI's [`StylusFeed`], where the canvas reads it exactly like the web runner's Pointer
 //! Events and automation's simulated pen. On Windows, winit forwards `WM_POINTER` (Windows Ink)
 //! pressure as touch force; when the driver serves Wintab instead — the Wacom driver's "Use
-//! Windows Ink" checkbox off, read from its settings file (`wacom::load`) — this module installs
+//! Windows Ink" checkbox off, read from its settings file (`wacom::windows_ink`) — this module installs
 //! the Wintab reader too, and `PHOTOCRAFT_WINTAB=1` forces it on (`=0` keeps it off).
 //!
 //! Wayland compositors give a pen only to clients that bind the tablet protocol
@@ -40,7 +40,7 @@ pub fn install_macos(feed: &StylusFeed) -> Option<photocraft_tablet::macos::Moni
 
 /// Whether to read the pen through Wintab: `PHOTOCRAFT_WINTAB=1` forces the reader on, `=0` keeps
 /// it off; unset, it is on exactly when the driver itself says Windows Ink is off for this
-/// executable (`use_ink` from `wacom::load`, the Wacom driver's "Use Windows Ink" checkbox — off,
+/// executable (`use_ink` from `wacom::windows_ink`, the Wacom driver's "Use Windows Ink" checkbox — off,
 /// the driver serves Wintab and synthesizes the mouse itself; on, winit already reports the
 /// pressure). `None` = no readable Wacom settings (another vendor or no driver): only the env var
 /// turns the reader on.
