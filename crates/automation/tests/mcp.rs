@@ -202,6 +202,37 @@ async fn command_ids_in_tool_schemas_exist() {
     client.cancel().await.unwrap();
 }
 
+/// `UI_SET_FIELDS` in `crates/ui-egui/src/control.rs`, read from source. The desktop shell owns the
+/// list; this crate describes it over MCP without depending on the UI crate (both are L6).
+/// Anchored on the declaration, not on the doc comment that mentions it first, and checked against
+/// the declared array length so a mis-parse fails loudly instead of testing the wrong names.
+fn ui_set_fields() -> Vec<String> {
+    let src = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ui-egui/src/control.rs")).expect("ui-egui control.rs");
+    let (_, rest) = src.split_once("UI_SET_FIELDS: [&str; ").expect("UI_SET_FIELDS is declared");
+    let declared: usize = rest.split_once(']').expect("declared length").0.parse().expect("declared length");
+    let body = rest.split_once('[').expect("field array").1.split_once("];").expect("terminated array").0;
+    let fields: Vec<String> = body.split('"').skip(1).step_by(2).map(str::to_string).collect();
+    assert_eq!(fields.len(), declared, "parsed {fields:?} from UI_SET_FIELDS; its source shape changed");
+    fields
+}
+
+/// #1548: `ui_set` must name every field `ui.set` accepts. An agent copies this list out of
+/// `tools/list`, and it ends "Other fields are an error", so an omission reads as a rejection of
+/// a field that in fact works. This guards the whole list against future drift, not only the
+/// three fields missing when the issue was filed.
+#[tokio::test(flavor = "multi_thread")]
+async fn ui_set_description_names_every_accepted_field() {
+    let client = connect(PhotocraftMcp::headless()).await;
+    let tools = client.list_all_tools().await.unwrap();
+    let tool = tools.iter().find(|t| t.name == "ui_set").expect("ui_set tool");
+    let schema = Value::Object((*tool.input_schema).clone());
+    let description = schema["properties"]["fields"]["description"].as_str().expect("ui_set fields description").to_string();
+    for field in ui_set_fields() {
+        assert!(description.contains(&field), "ui_set's description omits `{field}`, which ui.set accepts:\n{description}");
+    }
+    client.cancel().await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn errors_are_tool_errors_not_crashes() {
     let client = connect(PhotocraftMcp::headless()).await;
@@ -236,6 +267,39 @@ async fn preview_budget_failure_preserves_the_mcp_session() {
     let inspected = json_of(&call(&client, "doc_inspect", json!({})).await);
     assert_eq!(inspected["width"], 2049);
     client.cancel().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bridge_doc_save_rejects_headless_only_options_instead_of_saving_with_defaults() {
+    // Bridge mode forwards only the path to the running app: quality/format/tiffLayers/index
+    // must be refused up front (no bridge connection needed for that) rather than silently
+    // saving with the app's current settings.
+    let server = PhotocraftMcp::bridge("127.0.0.1:1", &"a".repeat(64)).unwrap();
+    let client = connect(server).await;
+    for params in [
+        json!({"path": "out.jpg", "quality": 50}),
+        json!({"path": "out.png", "format": "png"}),
+        json!({"path": "out.tif", "tiffLayers": true}),
+        json!({"path": "out.pcraft", "index": 0}),
+    ] {
+        let r = call(&client, "doc_save", params.clone()).await;
+        assert_eq!(r.is_error, Some(true), "{params}: {:?}", text(&r));
+        assert!(text(&r).contains("headless"), "{params}: {}", text(&r));
+    }
+}
+
+/// #946: like headless mode, a bridged `doc_save` without `path` reaches the app's `app.save`,
+/// which writes back to the document's own PSD, PSB or .pcraft file or refuses with its own error.
+#[tokio::test(flavor = "multi_thread")]
+async fn bridge_doc_save_without_path_forwards_app_save_for_write_back() {
+    let (addr, app) = fake_app().await;
+    let client = connect(PhotocraftMcp::bridge(&addr, CONTROL_TOKEN).unwrap()).await;
+    let saved = json_of(&call(&client, "doc_save", json!({})).await);
+    assert_eq!(saved, json!({"saved": {}}), "no `path` is sent, not even null");
+    let saved = json_of(&call(&client, "doc_save", json!({"path": "out.psd"})).await);
+    assert_eq!(saved, json!({"saved": {"path": "out.psd"}}));
+    client.cancel().await.unwrap();
+    app.abort();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -314,6 +378,49 @@ fn write_image(dir: &std::path::Path, name: &str, format: photocraft_codecs::For
     let bytes = photocraft_codecs::encode(&img, format, &Default::default()).unwrap();
     std::fs::write(dir.join(name), &bytes).unwrap();
     bytes
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn affinity_preview_warns_and_requires_a_new_save_path() {
+    let dir = tmp("affinity-preview");
+    let png = write_image(&dir, "preview.png", photocraft_codecs::Format::Png);
+    // Synthetic v12 envelope; the native document graph is intentionally absent.
+    let mut bytes = vec![0; 72];
+    bytes[..4].copy_from_slice(b"\x00\xffKA");
+    bytes[4..6].copy_from_slice(&12u16.to_le_bytes());
+    bytes[8..12].copy_from_slice(b"nsrP");
+    bytes[12..16].copy_from_slice(b"#Inf");
+    bytes[24..32].copy_from_slice(&72u64.to_le_bytes());
+    bytes[64..68].copy_from_slice(b"Prot");
+    bytes.extend(b"\xff\xff\xff\xffThmb");
+    bytes.extend(1u32.to_le_bytes());
+    bytes.extend((png.len() as u32 + 13).to_le_bytes());
+    bytes.extend(29u32.to_le_bytes());
+    bytes.extend(0u32.to_le_bytes());
+    bytes.extend((png.len() as u32).to_le_bytes());
+    bytes.push(1);
+    bytes.extend(png);
+    std::fs::write(dir.join("source.af"), &bytes).unwrap();
+    // A renamed layered extension must not bypass source protection.
+    std::fs::write(dir.join("renamed.psd"), &bytes).unwrap();
+    let client = connect(headless_in(&dir)).await;
+    for name in ["source.af", "renamed.psd"] {
+        let opened = json_of(&call(&client, "doc_open", json!({"path": name})).await);
+        assert!(opened["warnings"].to_string().contains("only its embedded 16×8 PNG preview"));
+        assert_eq!(opened["width"], 16);
+        let refused = call(&client, "doc_save", json!({})).await;
+        assert_eq!(refused.is_error, Some(true), "{}", text(&refused));
+        assert!(text(&refused).contains("pass `path`"), "{}", text(&refused));
+        let native = call(&client, "doc_save", json!({"path": "source.af"})).await;
+        assert_eq!(native.is_error, Some(true));
+        assert!(text(&native).contains("Affinity export"));
+        assert_eq!(std::fs::read(dir.join(name)).unwrap(), bytes);
+    }
+    json_of(&call(&client, "doc_save", json!({"path": "copy.pcraft"})).await);
+    assert_eq!(json_of(&call(&client, "doc_save", json!({})).await)["path"], "copy.pcraft");
+    assert_eq!(std::fs::read(dir.join("source.af")).unwrap(), bytes);
+    client.cancel().await.unwrap();
+    cleanup(&dir);
 }
 
 /// A save without `path` writes back only to a layered file in its own format (#416).
@@ -436,6 +543,7 @@ async fn fake_app_with_screenshot(screenshot_png: Option<Vec<u8>>) -> (String, t
                 "engine.execute" => {
                     json!({"id": id, "ok": true, "result": {"ran": req["params"]["command"], "params": req["params"]["params"], "wait": req["params"]["wait"]}})
                 }
+                "app.save" => json!({"id": id, "ok": true, "result": {"saved": req["params"]}}),
                 "engine.commands" => {
                     json!({"id": id, "ok": true, "result": [{"id": "file.new", "label": "New…", "enabled": true}]})
                 }
@@ -489,6 +597,59 @@ async fn bridge_forwards_to_control_protocol() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn bridge_lost_reply_does_not_replay_an_edit_and_next_call_reconnects() {
+    use photocraft_automation::{BridgeClient, Headless};
+    use std::time::Duration;
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let app = tokio::spawn(async move {
+            let mut backend = Headless::new();
+            backend.handle("doc.new", json!({"width": 8, "height": 8})).unwrap();
+            let initial_layers = backend.session.active().unwrap().doc.layer_count();
+            let initial_history = backend.session.active().unwrap().history.past_len();
+            let mut seen = Vec::new();
+            for connection in 0..2 {
+                let (socket, _) = listener.accept().await.unwrap();
+                let (read, mut write) = socket.into_split();
+                let mut reader = BufReader::new(read);
+                let mut line = String::new();
+                reader.read_line(&mut line).await.unwrap();
+                let (auth, authenticated) = photocraft_automation::security::authentication_reply(&line, CONTROL_TOKEN);
+                assert!(authenticated, "each connection must authenticate");
+                write.write_all(format!("{auth}\n").as_bytes()).await.unwrap();
+                line.clear();
+                reader.read_line(&mut line).await.unwrap();
+                let request: Value = serde_json::from_str(&line).unwrap();
+                seen.push(request["params"]["command"].as_str().unwrap().to_owned());
+                let result = backend.handle(request["method"].as_str().unwrap(), request["params"].clone()).unwrap();
+                if connection == 0 {
+                    // The edit has completed, but both socket halves close before its reply.
+                    continue;
+                }
+                let reply = json!({"id": request["id"], "ok": true, "result": result});
+                write.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+            }
+            let document = backend.session.active().unwrap();
+            assert_eq!(document.doc.layer_count(), initial_layers + 1, "the edit was applied once");
+            assert_eq!(document.history.past_len(), initial_history + 1, "one undo step");
+            seen
+        });
+        let bridge = BridgeClient::new(&addr, CONTROL_TOKEN).unwrap();
+        let result = bridge.call("engine.execute", json!({"command": "layer.new.layer", "params": {"name": "Once"}})).await;
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("operation may have completed"), "{error}");
+        assert!(error.contains("inspect"), "{error}");
+        let document = bridge.call("engine.execute", json!({"command": "document.inspect"})).await.unwrap();
+        assert_eq!(document["layers"].as_array().unwrap().len(), 2);
+        assert_eq!(app.await.unwrap(), ["layer.new.layer", "document.inspect"]);
+    })
+    .await
+    .expect("bridge lost-reply regression must finish");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn bridge_previews_downscale_before_enforcing_the_png_budget() {
     use photocraft_automation::budgets::MAX_PNG_BYTES;
 
@@ -524,6 +685,60 @@ async fn bridge_previews_downscale_before_enforcing_the_png_budget() {
 
     client.cancel().await.unwrap();
     app.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bridge_previews_reject_document_indices() {
+    let (addr, app) = fake_app().await;
+    let client = connect(PhotocraftMcp::bridge(&addr, CONTROL_TOKEN).unwrap()).await;
+    let mut errors = Vec::new();
+    for tool in ["ui_screenshot", "doc_render_preview"] {
+        let args = json!({"index": 0, "max_side": 20}).as_object().unwrap().clone();
+        let result = client.call_tool(CallToolRequestParams::new(tool).with_arguments(args)).await;
+        let error = match result {
+            Err(error) => Some(error.to_string()),
+            Ok(reply) if reply.is_error == Some(true) => Some(text(&reply)),
+            Ok(_) => None,
+        };
+        errors.push((tool, error));
+
+        let reply = call(&client, tool, json!({"max_side": 20})).await;
+        assert_ne!(reply.is_error, Some(true), "{tool}: {}", text(&reply));
+        let image = reply.content.iter().find_map(|content| content.as_image()).expect("screenshot");
+        let png = base64::engine::general_purpose::STANDARD.decode(&image.data).unwrap();
+        assert_eq!(photocraft_codecs::decode(&png).unwrap().dimensions(), (20, 10), "{tool}");
+    }
+    let tools = client.list_all_tools().await.unwrap();
+    let schema = &tools.iter().find(|tool| tool.name == "ui_screenshot").unwrap().input_schema;
+    client.cancel().await.unwrap();
+    let seen = tokio::time::timeout(std::time::Duration::from_secs(5), app).await.unwrap().unwrap();
+
+    assert!(errors.iter().all(|(_, error)| error.as_ref().is_some_and(|error| error.contains("index"))), "{errors:?}");
+    assert_eq!(seen.iter().filter(|request| request["method"] == "ui.screenshot").count(), 2, "rejected indices must not reach the app");
+    assert!(schema["properties"].get("index").is_none(), "{schema:?}");
+    assert!(schema["properties"].get("max_side").is_some(), "{schema:?}");
+    assert_eq!(schema.get("additionalProperties"), Some(&json!(false)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn headless_previews_preserve_document_indices() {
+    let client = connect(PhotocraftMcp::headless()).await;
+    json_of(&call(&client, "doc_new", json!({"width": 12, "height": 6, "background": "white"})).await);
+    json_of(&call(&client, "doc_new", json!({"width": 6, "height": 12, "background": "black"})).await);
+    for (args, dimensions, pixel) in [(json!({"index": 0, "max_side": 6}), (6, 3), [255, 255, 255, 255]), (json!({"max_side": 6}), (3, 6), [0, 0, 0, 255])] {
+        let reply = call(&client, "doc_render_preview", args).await;
+        assert_ne!(reply.is_error, Some(true), "{}", text(&reply));
+        let image = reply.content.iter().find_map(|content| content.as_image()).expect("preview");
+        let png = base64::engine::general_purpose::STANDARD.decode(&image.data).unwrap();
+        let image = photocraft_codecs::decode(&png).unwrap();
+        assert_eq!(image.dimensions(), dimensions);
+        assert!(image.to_rgba8().as_chunks::<4>().0.iter().all(|actual| actual[..] == pixel[..]));
+    }
+    assert_eq!(json_of(&call(&client, "session_list", json!({})).await)["active"], 1);
+    let tools = client.list_all_tools().await.unwrap();
+    let schema = &tools.iter().find(|tool| tool.name == "doc_render_preview").unwrap().input_schema;
+    assert!(schema["properties"].get("index").is_some(), "{schema:?}");
+    client.cancel().await.unwrap();
 }
 
 #[test]

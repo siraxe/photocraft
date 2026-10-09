@@ -99,6 +99,7 @@ photocraft/
 │  ├─ adobe-assets/            photocraft-adobe-assets  .abr .asl .aco/.ase .grd .pat .csh .atn .cube/.3dl, ACR .xmp presets (standalone, like psd)
 │  ├─ codecs/                  photocraft-codecs    png/jpeg/tiff/webp/gif/bmp/avif decode/encode, heif/heic decode (feature `heif`)
 │  ├─ heif/                    photocraft-heif      optional HEIF/HEIC decoder (heic-rs, pure Rust); used only by codecs behind its `heif` feature (standalone)
+│  ├─ affinity/                photocraft-affinity  bounded native Affinity reader: archive, object stream, layers, vectors, text, pixels (standalone; read only)
 │  ├─ raw/                     photocraft-raw       clean-room camera RAW decode (DNG, CR2, TIFF/EP) + develop pipeline (standalone, like psd)
 │  ├─ format/                  photocraft-format    native document format (.pcraft bundle): manifest + content-addressed tiles
 │  ├─ io/                      photocraft-io        import/export orchestration; doc ⇄ PSD mapping; PDF/SVG import (features)
@@ -434,9 +435,11 @@ psd/src/
 
 ## 12. Automation and extensibility
 
-- **`automation`:** an MCP server built on `rmcp`. It exposes:
-  - `session.list`, `doc.open`, `doc.save`, `doc.export`, `doc.inspect` (layer tree as JSON), `doc.render_preview` (PNG).
-  - `command.list` and `command.run(id, params)`, both generated from the registry.
+- **`automation`:** an MCP server built on `rmcp`. Its tool names use underscores (the dotted
+  names such as `doc.open` belong to the JSON control protocol, `docs/control-protocol.md`). It exposes:
+  - `session_list`, `doc_open`, `doc_new`, `doc_save`, `doc_export`, `doc_inspect` (layer tree as JSON), `doc_render_preview` (PNG), `doc_select`, `doc_close`.
+  - `command_list`, `command_run` and `command_batch`, generated from the registry; `jobs_list` and `jobs_cancel` for background jobs.
+  - Bridge only (a running app): `ui_inspect`, `ui_screenshot`, `ui_pointer`, `ui_menu_invoke`, `ui_set`, `control_call`. The full list is in `docs/development.md` › MCP.
   - Stdio for agent CLIs, and optionally loopback TCP with a token so it can attach to a running GUI.
   - `AuthorizedWorkspace`, which holds independent read and write directory capabilities. Remote
     paths are validated relative names; engine commands that still require ambient filesystem

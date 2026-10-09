@@ -68,7 +68,8 @@ impl AuthorizedWorkspace {
         options.write(true).create_new(true);
         let written = root.dir.open_with(&tmp, &options).and_then(|mut file| {
             file.write_all(bytes)?;
-            file.sync_all()
+            // Falls back to a plain fsync on shares that refuse a full flush (#1336).
+            photocraft_format::atomic::sync_file(&file.into_std())
         });
         let renamed = written.and_then(|()| photocraft_format::atomic::retry_rename(RenameRetry::platform(), || root.dir.rename(&tmp, &root.dir, &relative)));
         if let Err(e) = renamed {
@@ -80,7 +81,7 @@ impl AuthorizedWorkspace {
         {
             let dir = if parent.as_os_str().is_empty() { PathBuf::from(".") } else { parent };
             if let Ok(d) = root.dir.open(&dir) {
-                let _ = d.sync_all();
+                let _ = photocraft_format::atomic::sync_file(&d.into_std());
             }
         }
         Ok(())
@@ -258,10 +259,12 @@ fn preference_uses_ambient_filesystem(path: &str) -> bool {
 
 fn command_uses_ambient_path(id: &str, params: &Value) -> bool {
     match id {
-        "brush.presets.importAbr" | "gradient.presets.importGrd" | "plugin.install" => {
+        "brush.presets.importAbr" | "gradient.presets.importGrd" | "plugin.install" | "swatches.import" => {
             // `data` wins over `path` in these commands; any `path` without it reads the filesystem.
             params.get("data").is_none() && params.get("path").is_some()
         }
+        // With a `path` the file is written there; without one the bytes come back as `data`.
+        "swatches.export" => params.get("path").is_some(),
         "plugin.reload" => true,
         _ => false,
     }
@@ -460,6 +463,14 @@ mod tests {
         assert!(authorize_engine_command("prefs.set", &serde_json::json!({"path": "colorSettings.workingRgb", "value": "outside.icc"})).is_err());
         assert!(authorize_engine_step("file.open", &serde_json::json!({})).is_err());
         assert!(authorize_engine_step("actions.play", &serde_json::json!({})).is_ok());
+        // An allowed command can't reach a denied one by running it on its own behalf.
+        let mut session = photocraft_engine::Session::new();
+        session.execute("file.new", serde_json::json!({"width": 4, "height": 4})).unwrap();
+        session.authorize = Some(authorize_desktop_engine_step);
+        let params = serde_json::json!({"to": "grayscale"});
+        assert!(authorize_desktop_engine_command("file.automate.conditionalModeChange", &params).is_ok());
+        assert!(session.execute("file.automate.conditionalModeChange", params).is_err());
+        assert_eq!(session.active().unwrap().doc.mode, photocraft_engine::doc::ColorMode::Rgb);
         assert!(authorize_desktop_engine_step("file.saveACopy", &serde_json::json!({})).is_err());
     }
 
@@ -498,6 +509,8 @@ mod tests {
             ("plugin.reload", serde_json::json!({"path": "/outside/plugins"})),
             ("plugin.reload", serde_json::json!({})),
             ("plugin.install", serde_json::json!({"path": " "})),
+            ("swatches.import", serde_json::json!({"path": "/outside/set.aco"})),
+            ("swatches.export", serde_json::json!({"path": "/outside/set.ase"})),
         ] {
             assert!(authorize_engine_command(id, &params).is_err(), "{id}: {params}");
         }
@@ -505,6 +518,8 @@ mod tests {
             ("brush.presets.importAbr", serde_json::json!({"data": "QUJD"})),
             ("gradient.presets.importGrd", serde_json::json!({"data": "QUJD"})),
             ("plugin.install", serde_json::json!({"data": "QUJD"})),
+            ("swatches.import", serde_json::json!({"data": "QUJD"})),
+            ("swatches.export", serde_json::json!({"format": "ase"})),
         ] {
             assert!(authorize_engine_command(id, &params).is_ok(), "{id}: {params}");
         }
@@ -576,6 +591,10 @@ mod tests {
                 | "path.info"
                 | "path.set"
                 | "path.transform"
+                | "path.moveAnchors"
+                | "path.moveHandle"
+                | "path.bendSegment"
+                | "path.convertPoint"
                 | "path.clippingPath.set"
                 | "path.rename"
                 | "select.toWorkPath"
@@ -589,7 +608,10 @@ mod tests {
                 | "layer.combineShapes.intersectShapeAreas"
                 | "layer.combineShapes.excludeOverlappingShapes"
                 | "layer.combineShapes.mergeShapeComponents"
-        ) {
+        ) || id.starts_with("layer.newFillLayer.")
+            || id.starts_with("layer.newAdjustmentLayer.")
+        {
+            // New fill and adjustment layers take a vector path as their vector mask (#1419).
             return false;
         }
         params.to_ascii_lowercase().contains("path")

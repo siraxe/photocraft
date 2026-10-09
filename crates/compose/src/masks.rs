@@ -16,8 +16,16 @@ use photocraft_raster::Surface;
 const FORMAT: PixelFormat = PixelFormat { mode: ColorMode::Grayscale, sample: SampleType::F32, alpha: false };
 
 struct Cache {
-    map: HashMap<u64, (Surface, u64)>,
+    map: HashMap<u64, CacheEntry>,
     tick: u64,
+}
+
+struct CacheEntry {
+    surface: Surface,
+    tick: u64,
+    // The key contains input tile addresses. Keep those tiles alive until eviction:
+    // edits must copy them, and the allocator cannot reuse their addresses for new tiles.
+    _pixel_input: Option<Surface>,
 }
 
 fn cache() -> &'static Mutex<Cache> {
@@ -109,8 +117,8 @@ pub fn combined_mask(layer: &Layer, canvas: Rect) -> Option<Surface> {
         c.tick += 1;
         let tick = c.tick;
         if let Some(e) = c.map.get_mut(&k) {
-            e.1 = tick;
-            return Some(e.0.clone());
+            e.tick = tick;
+            return Some(e.surface.clone());
         }
     }
     // Far outside the path the vector mask is constant.
@@ -164,19 +172,48 @@ pub fn combined_mask(layer: &Layer, canvas: Rect) -> Option<Surface> {
     }
     let mut c = cache().lock().unwrap_or_else(|e| e.into_inner());
     if c.map.len() >= CAPACITY
-        && let Some(old) = c.map.iter().min_by_key(|e| e.1.1).map(|e| *e.0)
+        && let Some(old) = c.map.iter().min_by_key(|e| e.1.tick).map(|e| *e.0)
     {
         c.map.remove(&old);
     }
     let tick = c.tick;
-    c.map.insert(k, (s.clone(), tick));
+    c.map.insert(k, CacheEntry { surface: s.clone(), tick, _pixel_input: layer.mask.as_ref().map(|m| m.surface.clone()) });
     Some(s)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use photocraft_doc::LayerMask;
     use photocraft_doc::vector::{Knot, Path, Subpath, VectorMask};
+
+    #[test]
+    fn pixel_edits_refresh_cached_masks_at_every_depth() {
+        let canvas = Rect::new(0, 0, 64, 64);
+        for sample in [SampleType::U8, SampleType::U16, SampleType::F32] {
+            let mut layer = Layer::raster("edited mask", PixelFormat::RGBA8);
+            let mut mask = LayerMask::hide_all();
+            mask.surface = Surface::new(PixelFormat { sample, ..FORMAT });
+            mask.surface.fill_rect(canvas, &[1.0]);
+            mask.feather = 4.0;
+            layer.mask = Some(mask);
+
+            let first = combined_mask(&layer, canvas).unwrap();
+            assert!((first.sample_channel(32, 32, 0) - 1.0).abs() < 1e-6);
+            drop(first);
+            // No document/undo snapshot shares the input. Previously this write could
+            // reuse the original tile address and return the old cached white mask.
+            layer.mask.as_mut().unwrap().surface.fill_rect(canvas, &[0.0]);
+            let edited = combined_mask(&layer, canvas).unwrap();
+            assert_eq!(edited.sample_channel(32, 32, 0), 0.0, "{sample:?}");
+
+            layer.mask.as_mut().unwrap().surface.fill_rect(canvas, &[0.5]);
+            let repainted = combined_mask(&layer, canvas).unwrap();
+            assert!((repainted.sample_channel(32, 32, 0) - 0.5).abs() < 0.005, "{sample:?}");
+            let warm = combined_mask(&layer, canvas).unwrap();
+            assert!(repainted.tiles().zip(warm.tiles()).all(|((_, a), (_, b))| Arc::ptr_eq(a, b)));
+        }
+    }
 
     #[test]
     fn matches_the_cpu_mask_and_is_cached() {

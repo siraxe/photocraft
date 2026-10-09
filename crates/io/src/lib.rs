@@ -15,6 +15,9 @@
 //!   layer; unsupported raw variants fall back to the embedded JPEG preview.
 //! * Layered TIFFs (Photoshop layer data in tags 37724 and 34377) open with their
 //!   layers through the PSD path and are written back the same way; see `tiff_layers`.
+//! * Affinity documents (`.af`, `.afdesign`, `.afphoto`, `.afpub`) open natively
+//!   with no source save path, what isn't imported listed in the warnings; a file
+//!   whose native data can't be read opens as its embedded preview; see `affinity`.
 //! * Every other format goes through `photocraft-codecs` as a single
 //!   "Background" layer (depth and Gray/RGB/CMYK model preserved).
 //!
@@ -25,6 +28,7 @@
 
 pub mod abr_map;
 mod adjust_map;
+pub mod affinity;
 pub mod annotations_map;
 pub mod blocks;
 mod channel_map;
@@ -35,12 +39,14 @@ mod gradient_bake;
 pub mod linked;
 mod multichannel_map;
 pub mod pattern_map;
-mod pixels;
+pub mod pixels;
 mod psd_export;
 mod psd_import;
 pub mod raw;
 pub mod slices_map;
 pub mod smart_map;
+pub mod svg;
+mod text_import;
 pub mod text_styles_map;
 pub mod tiff_layers;
 pub mod vector_map;
@@ -50,7 +56,7 @@ use photocraft_doc::Document;
 use photocraft_psd::{PsdError, PsdFile};
 
 pub use adjust_map::ADJUSTMENT_KEYS;
-pub use flat::document_to_image;
+pub use flat::{document_to_image, import_tiff_page};
 pub use psd_export::{PsdExportOptions, document_to_psd, document_to_psd_with};
 pub use psd_import::{psd_to_document, psd_to_document_with};
 
@@ -75,6 +81,9 @@ pub enum IoError {
     /// Camera raw decode failure.
     #[error("{0}")]
     Raw(#[from] photocraft_raw::RawError),
+    /// An SVG that does not parse (or is too large to rasterise).
+    #[error("SVG: {0}")]
+    Svg(String),
     /// A background import was cancelled ([`import_with`]).
     #[error("cancelled")]
     Cancelled,
@@ -87,6 +96,19 @@ pub struct ImportResult {
     pub document: Document,
     /// Human-readable notes about anything approximated or dropped.
     pub warnings: Vec<String>,
+    /// Save must not write back to the source (an Affinity document: PhotoCraft can't write it).
+    pub source_read_only: bool,
+    /// Only a stand-in picture of the file (an Affinity document whose native data couldn't be
+    /// read): Open shows it with its warning; Place and other auxiliary imports refuse it.
+    pub preview_only: bool,
+}
+
+/// The import note for a file whose horizontal and vertical resolutions (`x`, `y`, in pixels per
+/// inch) differ: a document has one resolution, so it keeps the horizontal one and saves it on
+/// both axes (#1018). Differences under 0.01 ppi are below what the warning can show.
+pub(crate) fn unequal_resolution_warning(x: f64, y: f64) -> Option<String> {
+    ((x - y).abs() >= 0.01)
+        .then(|| format!("the vertical resolution ({y:.2} ppi) differs from the horizontal ({x:.2} ppi); the document keeps {x:.2} ppi for both"))
 }
 
 /// Result of [`export`].
@@ -139,7 +161,7 @@ pub fn is_psd(bytes: &[u8]) -> bool {
     bytes.starts_with(b"8BPS")
 }
 
-/// Imports a file. PSD/PSB and camera raws are detected by magic; everything
+/// Imports a file. PSD/PSB, Affinity containers and camera raws are detected by magic; everything
 /// else is decoded with `photocraft-codecs`.
 pub fn import(name: &str, bytes: &[u8]) -> Result<ImportResult, IoError> {
     import_with(name, bytes, &photocraft_raster::Interrupt::NONE)
@@ -158,7 +180,7 @@ pub fn import_with(name: &str, bytes: &[u8], ctl: &photocraft_raster::Interrupt)
 fn import_stages(name: &str, bytes: &[u8], ctl: &photocraft_raster::Interrupt) -> Result<ImportResult, IoError> {
     // A declared native extension must reach its loader so malformed bundles retain format errors.
     if has_extension(name, photocraft_format::EXTENSION) || photocraft_format::is_pcraft(bytes) {
-        return Ok(ImportResult { document: photocraft_format::load_from_bytes(bytes)?, warnings: Vec::new() });
+        return Ok(ImportResult { document: photocraft_format::load_from_bytes(bytes)?, warnings: Vec::new(), source_read_only: false, preview_only: false });
     }
     if is_psd(bytes) {
         let file = PsdFile::from_bytes(bytes)?;
@@ -171,10 +193,17 @@ fn import_stages(name: &str, bytes: &[u8], ctl: &photocraft_raster::Interrupt) -
         ctl.progress(0.05);
         let (mut document, warnings) = psd_import::psd_to_document_with(&file, ctl).ok_or(IoError::Cancelled)?;
         document.name = name.to_string();
-        return Ok(ImportResult { document, warnings });
+        text_import::prepare(&mut document);
+        return Ok(ImportResult { document, warnings, source_read_only: false, preview_only: false });
+    }
+    if affinity::is_affinity(bytes) || affinity::has_extension(name) {
+        return affinity::import(name, bytes);
     }
     if raw::is_raw(bytes) {
         return raw::import_raw(name, bytes);
+    }
+    if has_extension(name, "svg") || has_extension(name, "svgz") || svg::is_svg(bytes) {
+        return svg::import_svg(name, bytes);
     }
     flat::import_flat(name, bytes)
 }
@@ -191,6 +220,9 @@ fn has_extension(name: &str, expected: &str) -> bool {
 /// bare extension).
 pub fn export(doc: &Document, name_or_ext: &str, opts: &ExportOptions) -> Result<ExportResult, IoError> {
     let ext = extension(name_or_ext);
+    if affinity::EXTENSIONS.contains(&ext.as_str()) {
+        return Err(IoError::Unsupported("Affinity export is not implemented; save a new PSD, PNG or .pcraft copy".into()));
+    }
     if ext == photocraft_format::EXTENSION {
         let previews = photocraft_format::SaveOptions {
             thumbnail: Some(photocraft_compose::thumbnail(doc, 256)),
@@ -200,7 +232,8 @@ pub fn export(doc: &Document, name_or_ext: &str, opts: &ExportOptions) -> Result
     }
     if ext == "psd" || ext == "psb" {
         let o = PsdExportOptions { force_psb: opts.force_psb || ext == "psb", ..Default::default() };
-        let (file, warnings) = document_to_psd_with(doc, &o);
+        let (mut file, mut warnings) = document_to_psd_with(doc, &o);
+        warnings.extend(tiff_layers::strip_foreign_order_blocks(&mut file));
         // Never write a header the reader would refuse (e.g. a zero-sized canvas).
         file.header.validate()?;
         let bytes = file.to_bytes()?;

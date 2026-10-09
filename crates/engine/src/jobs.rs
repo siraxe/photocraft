@@ -427,6 +427,9 @@ impl Session {
             },
             move |s, r: photocraft_io::ImportResult| {
                 let (index, color) = s.open_document(r.document, None);
+                if let Some(st) = s.active_mut() {
+                    st.source_read_only = r.source_read_only;
+                }
                 Ok(json!({"document": index, "name": name_a, "warnings": r.warnings, "color": color}))
             },
         )
@@ -594,19 +597,29 @@ impl Session {
         if !(params.is_object() || params.is_null()) {
             return Err(EngineError::BadParams { cmd: id.to_string(), msg: "params must be a JSON object".into() });
         }
+        // Untrusted sessions gate every command, including the ones a command runs on its own
+        // behalf (`file.automate.conditionalModeChange` runs `image.mode.*`), before any side
+        // effect.
+        if let Some(gate) = self.authorize {
+            gate(id, &params)?;
+        }
         // A floating selection drops before any other command (Undo puts it back instead).
         if let Some(v) = crate::float_cmds::before_command(self, id)? {
             return Ok(Started::Done(v));
         }
-        if let Err(why) = crate::smart_cmds::target_enabled(self, spec, &params).unwrap_or_else(|| (spec.enabled)(self)) {
+        // Pixel commands follow the Channels panel target unless the caller names one.
+        let run_params = crate::channel_cmds::inject_target(self, id, crate::commands::inject_kind(id, params.clone()));
+        if let Err(why) = crate::smart_cmds::target_enabled(self, spec, &params).unwrap_or_else(|| self.precondition(spec, &run_params)) {
             return Err(EngineError::Disabled(id.to_string(), why));
         }
         if let Some(why) = self.job_conflict(id, spec.journal) {
             return Err(EngineError::Disabled(id.to_string(), why));
         }
+        // Painting on or moving a hidden layer is refused, as in Photoshop (#571).
+        if let Some(why) = crate::hidden_target::refusal(self, id, &params) {
+            return Err(EngineError::Other(why.into()));
+        }
         self.coalesce_request = params.get("coalesce").and_then(Value::as_str).map(str::to_string);
-        // Pixel commands follow the Channels panel target unless the caller names one.
-        let run_params = crate::channel_cmds::inject_target(self, id, crate::commands::inject_kind(id, params.clone()));
         self.color_restrict = crate::channel_cmds::color_restriction(self, id, &run_params);
         self.jobs.spawn = background;
         // Last-resort guard (AGENTS.md, Never crash): a command that panics anyway fails with an
@@ -694,13 +707,18 @@ impl Session {
         };
         self.coalesce_request = None;
         self.color_restrict = None;
+        // Finish successful command bookkeeping on the document the job edited.
+        // Restoring the viewed document first would attribute Fade and slice updates
+        // to that document instead, when the user switched tabs mid-job.
+        if r.is_ok() {
+            self.after_command(command, params.clone(), *journal);
+        }
         // Keep the user's active document unless the job opened a new one.
+        // This also restores the selection when the apply step returned an error.
         if target.is_some() && self.active == target {
             self.active = prev_active.filter(|i| *i < self.docs.len()).or(self.active);
         }
-        let v = r?;
-        self.after_command(command, params.clone(), *journal);
-        Ok(v)
+        r
     }
 
     fn end_job(&mut self, job: &Running, outcome: JobOutcome) {

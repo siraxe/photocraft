@@ -91,7 +91,10 @@ impl Headless {
             }
             None => Some(requested.to_string()),
         };
-        let index = self.session.add_document(o.document, path);
+        let index = self.session.add_document(o.document, path.filter(|_| !o.source_read_only));
+        if let Some(st) = self.session.active_mut() {
+            st.source_read_only = o.source_read_only;
+        }
         let d = &self.session.documents()[index];
         Ok(json!({
             "index": index,
@@ -142,14 +145,23 @@ impl Headless {
                 warnings
             }
         };
-        let is_native = format
-            .map(|f| f.trim_start_matches('.').eq_ignore_ascii_case("pcraft"))
-            .unwrap_or_else(|| target.extension().is_some_and(|e| e.eq_ignore_ascii_case("pcraft")));
-        if is_native {
+        // A layered document save (PSD, PSB or .pcraft) is a full write, not a flattened copy:
+        // record the current revision as saved so the session stops reporting `dirty`, and make
+        // the file the document's path. A flat export (PNG, JPEG, …) is a copy and leaves both
+        // alone (#1547).
+        let ext =
+            format.map(|f| f.trim_start_matches('.').to_ascii_lowercase()).or_else(|| target.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()));
+        let layered = matches!(ext.as_deref(), Some("psd" | "psb")) || ext.as_deref() == Some(photocraft_format::EXTENSION);
+        if layered {
+            // Saving by index must not retarget the next automation command.
+            let previously_active = self.session.active_index();
             self.session.set_active(i);
             if let Some(st) = self.session.active_mut() {
                 st.saved_revision = st.revision;
                 st.path = Some(target.to_string_lossy().into_owned());
+            }
+            if let Some(active) = previously_active {
+                self.session.set_active(active);
             }
         }
         Ok(json!({ "path": target.to_string_lossy(), "warnings": warnings }))

@@ -513,7 +513,7 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
                         let mut rgb = c.map_or([neon[0], neon[1], neon[2]], |v| [v[0], v[1], v[2]]);
                         ui.horizontal(|ui| {
                             ui.label(egui::RichText::new(tl!("Glow Color")).color(t.text_dim));
-                            ui.color_edit_button_rgb(&mut rgb);
+                            crate::widgets::color_edit_button_rgb(ui, &mut rgb);
                         });
                         e.params.insert("glowColor".into(), json!([rgb[0], rgb[1], rgb[2], 1.0]));
                     }

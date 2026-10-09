@@ -221,6 +221,58 @@ fn a_running_job_locks_its_document_but_not_others() {
 }
 
 #[test]
+fn background_job_finishes_bookkeeping_on_edited_document_after_tab_switch() {
+    let mut s = session(64, 64);
+    let edited_doc = s.active().unwrap().doc.id;
+    let gate = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let worker_gate = Arc::clone(&gate);
+    // Hold a fadeable filter job until another document is the active tab.
+    // A deterministic gate avoids relying on the filter being sufficiently slow.
+    let id = job(s
+        .start_job(
+            "filter.blur.gaussianBlur",
+            json!({"radius": 2}),
+            "Deferred Blur",
+            true,
+            move |ctx| {
+                while !worker_gate.load(std::sync::atomic::Ordering::Relaxed) {
+                    ctx.check()?;
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Ok(())
+            },
+            |s, ()| {
+                s.edit("Deferred Blur", |doc, active| {
+                    let layer = active.ok_or_else(|| EngineError::Other("no active layer".into()))?;
+                    let surface = doc.layer_mut(layer).ok_or(EngineError::NoLayer(layer))?.surface_mut().ok_or(EngineError::NoLayer(layer))?;
+                    surface.fill_rect(photocraft_geom::Rect::new(0, 0, 1, 1), &[0.4, 0.3, 0.2, 1.0]);
+                    Ok(())
+                })?;
+                Ok(json!({"filter": {"radius": 2}}))
+            },
+        )
+        .unwrap());
+
+    s.execute("file.new", json!({"width": 8, "height": 8})).unwrap();
+    s.execute("layer.new.layer", json!({})).unwrap();
+    let viewed_doc = s.active().unwrap().doc.id;
+    let viewed_revision = s.active().unwrap().revision;
+    assert_eq!(s.active_index(), Some(1));
+
+    gate.store(true, std::sync::atomic::Ordering::Relaxed);
+    let event = wait_event(&mut s, id);
+    assert!(matches!(event.outcome, JobOutcome::Done(_)), "{event:?}");
+    assert_eq!(s.active_index(), Some(1), "the user stays on the selected document");
+    assert_eq!(s.documents()[1].revision, viewed_revision, "the viewed document is unchanged");
+    assert_eq!(s.documents()[1].doc.id, viewed_doc);
+    assert_eq!(s.edit_state.fade.as_ref().map(|fade| fade.doc), Some(edited_doc), "Fade belongs to the edited document");
+    assert!(!s.is_enabled("edit.fade"), "Fade must not target the viewed document");
+
+    assert!(s.set_active(0));
+    assert!(s.is_enabled("edit.fade"), "Fade must be available on the document that was edited");
+}
+
+#[test]
 fn closing_the_document_cancels_its_job() {
     let mut s = session(1600, 1200);
     let id = job(s.start("filter.blur.gaussianBlur", json!({"radius": 80})).unwrap());

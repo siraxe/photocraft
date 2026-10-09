@@ -10,7 +10,7 @@ id = "UI-217-1"
 target = "Tool options, last Export As / Save for Web / Fill settings and font recents persist"
 status = "partial"
 issue = 217
-note = "Fill (fill_ui.rs:72) and Liquify (liquify_ui.rs:64, #418) keep their settings in Preferences (prefs.dialogs); no tool_options/export fields in Preferences; export_dialog.rs:21 png/85"
+note = "Fill (fill_ui.rs:72) and Liquify (liquify_ui.rs:64, #418) keep their settings in Preferences (prefs.dialogs); no tool_options/export fields in Preferences; export_dialog.rs:21 png/85. Each painting tool keeps its own brush (paint_mouse.rs sync_tool_brush, #218), but those live in UiState, so they are lost at quit like the other tool options"
 
 [[item]]
 id = "UI-217-2"
@@ -85,9 +85,9 @@ note = "theme.rs:28 five themes"
 [[item]]
 id = "UI-217-12"
 target = "Save custom New Document presets; a real Recent category"
-status = "missing"
+status = "partial"
 issue = 217
-note = "new_doc_ui.rs:17 'Recent' is a static list"
+note = "document_preset_cmds.rs and new_doc_ui.rs: named presets save/select/delete through preferences; Recent remains a static list plus Clipboard"
 
 [[item]]
 id = "UI-217-13"
@@ -106,9 +106,9 @@ note = "panels.rs:1108 plain dropdown; trash is click-only (panels.rs:1213)"
 [[item]]
 id = "UI-217-15"
 target = "Curves: smoothing / pencil mode, black/grey/white eyedroppers, tooltips"
-status = "missing"
+status = "partial"
 issue = 217
-note = "adjust_editors.rs:397 has none of them"
+note = "adjust_dialog.rs adds black/gray/white eyedroppers; smoothing and pencil modes remain missing"
 
 [[item]]
 id = "UI-217-16"

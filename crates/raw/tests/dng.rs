@@ -128,8 +128,9 @@ fn out_of_range_default_crop_falls_back_to_active_area_with_warning() {
     assert!(s.warnings.iter().any(|warning| warning.contains("out-of-range") && warning.contains("default crop")), "{:?}", s.warnings);
 }
 
+/// DefaultCropSize defaults to the whole image, which can't fit once the origin moves in.
 #[test]
-fn incomplete_default_crop_falls_back_to_active_area_with_warning() {
+fn default_crop_origin_without_size_falls_back_to_active_area_with_warning() {
     let (w, h) = (16, 12);
     let mut spec = DngSpec::cfa(w, h, vec![1000; w * h]);
     spec.active_area = Some([2, 3, 10, 14]);
@@ -137,7 +138,32 @@ fn incomplete_default_crop_falls_back_to_active_area_with_warning() {
 
     let s = sensor(&spec.build());
     assert_eq!(s.crop, s.active);
-    assert!(s.warnings.iter().any(|warning| warning.contains("incomplete") && warning.contains("default crop")), "{:?}", s.warnings);
+    assert!(s.warnings.iter().any(|warning| warning.contains("out-of-range") && warning.contains("default crop")), "{:?}", s.warnings);
+}
+
+/// #950: DefaultCropOrigin defaults to (0, 0), so a size-only crop starts at the active area's
+/// top-left corner.
+#[test]
+fn default_crop_size_without_origin_crops_from_the_active_area_origin() {
+    let (w, h) = (8, 8);
+    let mut spec = DngSpec::cfa(w, h, (0..w * h).map(|i| (i as u16) * 37).collect());
+    spec.active_area = Some([0, 0, 8, 8]);
+    spec.default_crop_size_only = Some([4, 4]);
+    let bytes = spec.build();
+
+    let s = sensor(&bytes);
+    assert_eq!(s.crop, Rect::new(0, 0, 4, 4));
+    assert!(s.warnings.iter().all(|warning| !warning.contains("default crop")), "{:?}", s.warnings);
+    let d = develop(&bytes, &DevelopOptions::default()).unwrap();
+    assert_eq!((d.width, d.height), (4, 4));
+
+    // Inside an offset active area the crop starts at that area's corner.
+    let (w, h) = (16, 12);
+    let mut spec = DngSpec::cfa(w, h, vec![1000; w * h]);
+    spec.active_area = Some([2, 3, 10, 14]);
+    spec.default_crop_size_only = Some([6, 4]);
+    let s = sensor(&spec.build());
+    assert_eq!(s.crop, Rect::new(3, 2, 6, 4));
 }
 
 /// Linear sRGB (D65) → XYZ, from the sRGB primaries (IEC 61966-2-1).

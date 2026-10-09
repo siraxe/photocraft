@@ -48,6 +48,7 @@ const F_STROKE_OUT: u32 = 1024u; // effect paint: outside stroke band
 const F_FIRST: u32 = 2048u;      // outside strokes: nothing accumulated yet
 const F_CHANNELS: u32 = 4096u;   // lerp: per-channel weights in p0 (channel restrictions)
 const F_LAB: u32 = 65536u;      // Lab document: Normal mixes in CIELAB
+const F_HDR: u32 = 262144u;     // 32-bit float document: Add / Divide don't clip at 1
 const F_QUANT: u32 = 32768u;    // lerp: A rounded to p0.x steps (adjustment results, integer docs)
 const F_ADD_DIFF: u32 = 16384u;  // lerp: A + (B - C) premultiplied (clips on pass-through groups)
 const F_TEXT_GAMMA: u32 = 8192u; // blend / atop / fx merge: type layer, mix coverage at gamma p4.w
@@ -152,7 +153,11 @@ fn vivid_light_generic(cb: f32, cs: f32) -> f32 {
     return min(cb / (2.0 * (1.0 - cs)), 1.0);
 }
 
+const F32_MAX: f32 = 3.40282347e38;
+
 fn blend_channel(mode: i32, cb: f32, cs: f32) -> f32 {
+    // Linear Dodge / Divide clip at 1 at integer depths, at f32::MAX in 32-bit documents.
+    let hi = select(1.0, F32_MAX, (op.flags & F_HDR) != 0u);
     switch mode {
         case 3: { return min(cb, cs); }                         // Darken
         case 4: { return cb * cs; }                             // Multiply
@@ -161,7 +166,7 @@ fn blend_channel(mode: i32, cb: f32, cs: f32) -> f32 {
         case 8: { return max(cb, cs); }                         // Lighten
         case 9: { return cb + cs - cb * cs; }                   // Screen
         case 10: { return color_dodge(cb, cs); }                // ColorDodge
-        case 11: { return min(cb + cs, 1.0); }                  // LinearDodge
+        case 11: { return min(cb + cs, hi); }                   // LinearDodge
         case 13: { return hard_light(cs, cb); }                 // Overlay
         case 14: { return soft_light_ps(cb, cs); }              // SoftLight
         case 15: { return hard_light(cb, cs); }                 // HardLight
@@ -179,7 +184,7 @@ fn blend_channel(mode: i32, cb: f32, cs: f32) -> f32 {
         case 22: { return max(cb - cs, 0.0); }                  // Subtract
         case 23: {                                              // Divide
             if (cs <= 0.0) { return select(1.0, 0.0, cb <= 0.0); }
-            return min(cb / cs, 1.0);
+            return min(cb / cs, hi);
         }
         default: { return cs; }                                 // Normal, Dissolve, PassThrough
     }
@@ -322,6 +327,42 @@ fn t_decode(v: f32, g: f32) -> f32 {
 fn t_encode(v: f32, g: f32) -> f32 {
     if (g <= 0.0) { return linear_to_srgb(max(v, 0.0)); }
     return pow(max(v, 0.0), 1.0 / g);
+}
+
+// compose::adjust::vibrance_lin: Photoshop's Vibrance slider (v in [-1, 1]) as an HSV change in
+// linear light that keeps the hue; b0 = boost fit (c0, c1, p, q), b1 = (r0, ra, rt).
+fn vibrance_lin(c: vec3<f32>, v: f32, b0: vec4<f32>, b1: vec3<f32>) -> vec3<f32> {
+    let mx = max(max(c.r, c.g), c.b);
+    let mn = min(min(c.r, c.g), c.b);
+    if (mx <= 0.0 || mx - mn <= 1e-9) { return c; }
+    let t = 1.0 - mn / mx;
+    let shape = t * (1.0 - t) * (2.0 - t + t * t) * mx * max(1.0 - mx, 0.0);
+    var t2: f32;
+    var v2: f32;
+    if (v < 0.0) {
+        let a = -v;
+        t2 = t * (1.0 - a / 4.0) * (1.0 - a + a * t * (1.0 + t) / 2.0);
+        v2 = mx - a * shape;
+    } else {
+        let d = mx - mn;
+        var h: f32;
+        if (mx == c.r) { h = rem_euclid((c.g - c.b) / d, 6.0); }
+        else if (mx == c.g) { h = (c.b - c.r) / d + 2.0; }
+        else { h = (c.r - c.g) / d + 4.0; }
+        h = h * 60.0;
+        var w = 0.0;
+        if (h <= 30.0) { w = 1.0; }
+        else if (h < 45.0) { w = (45.0 - h) / 15.0; }
+        else if (h >= 300.0) { w = (h - 300.0) / 60.0; }
+        let a = v * (1.0 - w) + 0.64 * pow(v, 1.6) * w;
+        let boost = (b0.x * a + b0.y * a * a) * pow(t, b0.z) * pow(1.0 - t, b0.w)
+            * exp((b1.x + b1.y * a + b1.z * (1.0 - t)) * max(1.0 - mx, 0.0));
+        t2 = min(t * (1.0 + boost), 1.0);
+        v2 = mx + v / 4.0 * shape;
+    }
+    let m2 = v2 * (1.0 - t2);
+    let k = (v2 - m2) / (mx - mn);
+    return vec3(m2) + (c - vec3(mn)) * k;
 }
 
 fn rgb_to_hsl(c: vec3<f32>) -> vec3<f32> {
@@ -522,10 +563,16 @@ fn adjust(c: vec3<f32>) -> vec3<f32> {
             return rgb;
         }
         case 9: {                                                              // Vibrance
-            let hsl = rgb_to_hsl(c);
-            let boost = p0.x * (1.0 - hsl.y);
-            let ns = clamp(hsl.y * (1.0 + p0.y) + boost * max(hsl.y, 0.1), 0.0, 1.0);
-            return hsl_to_rgb(hsl.x, ns, hsl.z);
+            // compose::adjust::vibrance_px: linear light (transfer p0.z), Vibrance (p0.x, boost
+            // fit p1, p2.xyz) then Saturation (p0.y) towards 0.288 R + 0.712 G; p0.w the ceiling.
+            var l = vec3(t_decode(c.r, p0.z), t_decode(c.g, p0.z), t_decode(c.b, p0.z));
+            if (p0.x != 0.0) { l = vibrance_lin(l, p0.x, p1, p2.xyz); }
+            if (p0.y != 0.0) {
+                let g = 0.288 * l.r + 0.712 * l.g;
+                l = clamp(vec3(g) + (1.0 + p0.y) * (l - vec3(g)), vec3(0.0), vec3(p0.w));
+            }
+            l = clamp(l, vec3(0.0), vec3(p0.w));
+            return vec3(t_encode(l.r, p0.z), t_encode(l.g, p0.z), t_encode(l.b, p0.z));
         }
         case 10: {                                                             // Channel mixer
             let r = clamp(dot(p0.xyz, c) + p0.w, 0.0, 1.0);
@@ -533,13 +580,12 @@ fn adjust(c: vec3<f32>) -> vec3<f32> {
             return vec3(r, clamp(dot(p1.xyz, c) + p1.w, 0.0, 1.0), clamp(dot(p2.xyz, c) + p2.w, 0.0, 1.0));
         }
         case 11: {                                                             // Photo filter
-            let f = c * (1.0 - p0.w) + c * p0.rgb * p0.w;
-            if (p1.x > 0.5) {
-                let l0 = gray(c);
-                let l1 = max(gray(f), 1e-6);
-                return clamp(f * l0 / l1, vec3(0.0), vec3(1.0));
-            }
-            return f;
+            // compose::adjust::photo_filter_matrix (rows p0..p2) in linear light, then SetLum.
+            let g = p3.y;
+            let lin = vec3(t_decode(c.r, g), t_decode(c.g, g), t_decode(c.b, g));
+            var f = vec3(t_encode(dot(p0.xyz, lin), g), t_encode(dot(p1.xyz, lin), g), t_encode(dot(p2.xyz, lin), g));
+            if (p3.x > 0.5) { f = set_lum(f, lum(c)); }
+            return clamp(f, vec3(0.0), vec3(1.0));
         }
         case 12: {                                                             // Black & White
             // compose::adjust::black_white_gray: grey + secondary + primary parts, weighted.
@@ -793,7 +839,7 @@ fn pattern_sample(d: vec2<i32>) -> vec4<f32> {
 }
 
 // Effect paint colour at `d`: p2.z = 0 solid (`color`), 1 gradient (stops in `lut_tex`),
-// 2 pattern.
+// 2 pattern (4, a glow's gradient, is resolved in `fs_fxpaint`).
 fn fx_color(d: vec2<i32>) -> vec4<f32> {
     let kind = i32(op.p2.z);
     if (kind == 1) {
@@ -868,6 +914,13 @@ fn fs_fxpaint(in: VOut) -> @location(0) vec4<f32> {
     if ((op.flags & F_STROKE_OUT) != 0u && inside_shape) {
         m = select(1.0, 0.0, (op.flags & F_VECTOR) != 0u);
     }
+    if (i32(op.p2.z) == 4) {
+        // effects::paint_glow: the gradient at 1 - strength, opaque from strength 1 / gain (p0.x).
+        let k = min(m * op.p0.x, 1.0) * op.opacity;
+        if (k <= 0.0) { return dst; }
+        let t = 1.0 - clamp(m, 0.0, 1.0);
+        return composite(op.mode, dst, vec4(lut(0, t), lut(1, t), lut(2, t), lut(3, t) * k), 1.0);
+    }
     let k = m * op.opacity;
     if (k <= 0.0) { return dst; }
     let c = fx_color(d);
@@ -888,7 +941,8 @@ fn fs_fxstroke(in: VOut) -> @location(0) vec4<f32> {
     let first = (op.flags & F_FIRST) != 0u;
     var cover = 0.0;
     var lay_a = 0.0;
-    if (!first || outline) {
+    let vector = (op.flags & F_VECTOR) != 0u;
+    if (!first || outline || !vector) {
         let cv = textureLoad(tex_c, p, 0);
         cover = cv.r;
         lay_a = cv.g;
@@ -897,7 +951,15 @@ fn fs_fxstroke(in: VOut) -> @location(0) vec4<f32> {
     if (outline) {
         k = k * outline_share(a, lay_a);
     } else if (a > INSIDE_EPS) {
-        k = select(1.0, 0.0, (op.flags & F_VECTOR) != 0u);
+        // Pixel layers: the stroke shows beneath only through the part the shape leaves
+        // (`effects.rs`): (1 - a) / (1 - layer alpha), 1 under an opaque layer.
+        if (vector) {
+            k = 0.0;
+        } else if (lay_a >= 1.0) {
+            k = 1.0;
+        } else {
+            k = clamp((1.0 - clamp(a, 0.0, 1.0)) / (1.0 - lay_a), 0.0, 1.0);
+        }
     }
     let share = k * op.opacity * (1.0 - cover);
     if (op.kind == 1) { return vec4(cover + share, lay_a, 0.0, 0.0); }

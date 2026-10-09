@@ -411,7 +411,7 @@ fn options_editor(app: &mut PhotocraftApp, ui: &mut egui::Ui, paragraph: bool, s
                     // Style colours are stored encoded (like the Color panel's hex), not linear.
                     let h = |f: f32| (f.clamp(0.0, 1.0) * 255.0).round() as u8;
                     let mut rgb = c.map(h);
-                    if ui.color_edit_button_srgb(&mut rgb).changed() {
+                    if crate::widgets::color_edit_button_srgb(ui, &mut rgb).changed() {
                         set = Some(json!({ "color": format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2]) }));
                     }
                 }

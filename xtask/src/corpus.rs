@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::corpus_pins::{self, AG_PSD_COMMIT, HEIC_RS_COMMIT, PHOTOCRAFT_CORPUS_COMMIT, PILLOW_HEIF_COMMIT, PNGSUITE_URL, PSD_TOOLS_COMMIT};
+use crate::corpus_pins::{self, AG_PSD_COMMIT, HEIC_RS_COMMIT, OPENEXR_COMMIT, PHOTOCRAFT_CORPUS_COMMIT, PILLOW_HEIF_COMMIT, PNGSUITE_URL, PSD_TOOLS_COMMIT};
 use crate::pinned::USER_AGENT;
 use crate::{cargo, root, run};
 
@@ -15,9 +15,10 @@ pub const CORPUS_CRATES: &[&str] = &["photocraft-psd", "photocraft-codecs", "pho
 const HEIF_CRATES: &[&str] = &["photocraft-codecs", "photocraft-io"];
 
 /// Paths whose changes make `test-corpus --changed` run (the file-format and rendering crates).
-const CRITICAL: &[&str] = &["crates/psd/", "crates/io/", "crates/codecs/", "crates/heif/", "crates/compose/", "crates/gpu/", "crates/text/", "crates/format/"];
+const CRITICAL: &[&str] =
+    &["crates/psd/", "crates/io/", "crates/codecs/", "crates/heif/", "crates/compose/", "crates/gpu/", "crates/text/", "crates/format/", "crates/affinity/"];
 
-/// `cargo xtask corpus [--all | --pngsuite | --download | --psd | --psd-tools | --heif | --photoshop [--local]] [--update-manifest]`
+/// `cargo xtask corpus [--all | --pngsuite | --download | --psd | --psd-tools | --heif | --exr | --affinity | --photoshop [--local]] [--update-manifest]`
 pub fn cmd(args: &[&str]) -> Result<(), String> {
     let update = args.contains(&"--update-manifest");
     let mut did = false;
@@ -38,6 +39,14 @@ pub fn cmd(args: &[&str]) -> Result<(), String> {
     }
     if args.contains(&"--heif") {
         corpus_pins::HEIF.fetch(update)?;
+        did = true;
+    }
+    if args.contains(&"--exr") {
+        corpus_pins::EXR.fetch(update)?;
+        did = true;
+    }
+    if args.contains(&"--affinity") {
+        corpus_pins::AFFINITY.fetch(update)?;
         did = true;
     }
     if args.contains(&"--photoshop") {
@@ -105,8 +114,12 @@ fn list() {
                      manifest xtask/psd-tools-corpus.sha256. Fetch: --psd-tools
   corpus/heif/       [{}] a few HEIC/HEIF files from heic-rs@{} (MIT OR Apache-2.0) and
                      pillow-heif@{} (BSD-3-Clause), manifest xtask/heif-corpus.sha256. Fetch: --heif
+  corpus/exr/        [{}] the deep OpenEXR test images (BSD-3-Clause), openexr@{}
+                     manifest xtask/exr-corpus.sha256. Fetch: --exr
+  corpus/affinity/   [{}] 21 public Affinity 1–3 documents (CC0, MIT): vector-art, AFDesignLoad,
+                     Jac21/Branding, AssetStoreTemplate; manifest xtask/affinity-corpus.sha256. Fetch: --affinity
   corpus/pngsuite/   [{}] PngSuite (public domain), {PNGSUITE_URL}. Fetch: --pngsuite
-  corpus/tiff/, corpus/exr/, corpus/raw/   optional, copied in by hand
+  corpus/tiff/, corpus/raw/   optional, copied in by hand
 
 Pins: xtask/src/corpus_pins.rs. Moving one: change it, then --<name> --update-manifest.",
         corpus.display(),
@@ -118,6 +131,9 @@ Pins: xtask/src/corpus_pins.rs. Moving one: change it, then --<name> --update-ma
         status(corpus_pins::HEIF.is_current()),
         &HEIC_RS_COMMIT[..12],
         &PILLOW_HEIF_COMMIT[..12],
+        status(corpus_pins::EXR.is_current()),
+        &OPENEXR_COMMIT[..12],
+        status(corpus_pins::AFFINITY.is_current()),
         status(png_ok),
     );
 }

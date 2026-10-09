@@ -194,10 +194,110 @@ fn color_lookup_builtin_data_and_errors() {
         }
     }
     assert!(s.execute("image.adjustments.colorLookup", json!({"lut": "nope"})).is_err());
+    // A custom input domain is rejected with the reason instead of silently shifting the look.
+    // (A fresh pixel layer: this `s` still has the adjustment layer active, and the command is
+    // disabled there - the domain rejection itself needs a pixel layer to reach.)
+    s.execute("layer.new.layer", json!({})).unwrap();
+    let domained = "TITLE \"d\"
+DOMAIN_MIN 0.1 0.1 0.1
+DOMAIN_MAX 0.9 0.9 0.9
+LUT_3D_SIZE 2
+0 0 0
+0 0 1
+0 1 0
+0 1 1
+1 0 0
+1 0 1
+1 1 0
+1 1 1
+";
+    let e = s.execute("image.adjustments.colorLookup", json!({"data": domained, "fileName": "log.cube"})).unwrap_err();
+    assert!(e.to_string().contains("DOMAIN_MIN"), "{e}");
     assert!(s.execute("image.adjustments.colorLookup", json!({"data": "LUT_3D_SIZE 3\n0 0 0\n"})).is_err());
     assert!(s.execute("layer.newAdjustmentLayer.colorLookup", json!({"file": "/nonexistent/x.cube"})).is_err());
     let looks = s.execute("image.adjustments.colorLookup.list", json!({})).unwrap();
     assert_eq!(looks.as_array().unwrap().len(), photocraft_cms::lutfile::BUILTIN.len());
+}
+
+/// The kind's parameters, read back from the model (Color Lookup with its table name and size).
+fn adjustment_of(s: &Session, id: photocraft_doc::LayerId) -> Adjustment {
+    match &doc(s).layer(id).unwrap().content {
+        LayerContent::Adjustment(a) => a.clone(),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn selective_color_and_color_lookup_reject_wrong_typed_params() {
+    let cube = "LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n";
+    // (kind, params, the key the error must name)
+    let cases: Vec<(&str, Value, &str)> = vec![
+        ("selectiveColor", json!({"method": 5}), "method"),
+        ("selectiveColor", json!({"method": "sideways"}), "method"),
+        ("selectiveColor", json!({"relative": "yes"}), "relative"),
+        ("selectiveColor", json!({"reds": "not-an-array"}), "reds"),
+        ("selectiveColor", json!({"blues": [10, 20]}), "blues"),
+        ("selectiveColor", json!({"neutrals": [10, "20", 0, 0]}), "neutrals"),
+        ("selectiveColor", json!({"colors": 3, "cyan": 50}), "colors"),
+        ("selectiveColor", json!({"colors": "purples", "cyan": 50}), "purples"),
+        ("selectiveColor", json!({"colors": "reds", "cyan": "50"}), "cyan"),
+        ("selectiveColor", json!({"colors": "blacks", "black": [1]}), "black"),
+        ("colorLookup", json!({"lut": 42}), "lut"),
+        ("colorLookup", json!({"interpolation": 5}), "interpolation"),
+        ("colorLookup", json!({"interpolation": "bicubic"}), "interpolation"),
+        ("colorLookup", json!({"tetrahedral": 1}), "tetrahedral"),
+        ("colorLookup", json!({"dither": "yes"}), "dither"),
+        ("colorLookup", json!({"data": 42}), "data"),
+        ("colorLookup", json!({"data": cube, "fileName": 7}), "fileName"),
+        ("colorLookup", json!({"file": 42}), "file"),
+    ];
+    let named = |r: Result<Value>, key: &str, what: &str| match r {
+        Err(e @ EngineError::BadParams { .. }) => assert!(e.to_string().contains(key), "{what}: {e}"),
+        other => panic!("{what}: expected BadParams naming `{key}`, got {other:?}"),
+    };
+    for depth in DEPTHS {
+        for mode in ["rgb", "cmyk", "lab"] {
+            for (kind, p, key) in &cases {
+                let what = format!("{kind} {p} {depth} {mode}");
+                let mut s = session(depth, mode);
+                let (layers, steps, px) = (doc(&s).layers.len(), s.active().unwrap().history.past_len(), rgba(&s, 3, 3));
+                named(s.execute(&format!("image.adjustments.{kind}"), p.clone()), key, &what);
+                named(s.execute(&format!("layer.newAdjustmentLayer.{kind}"), p.clone()), key, &what);
+                assert_eq!(doc(&s).layers.len(), layers, "{what}: no layer added");
+                assert_eq!(s.active().unwrap().history.past_len(), steps, "{what}: no history step");
+                assert_eq!(rgba(&s, 3, 3), px, "{what}: pixels unchanged");
+            }
+        }
+    }
+    // An update with a wrong-typed key fails and keeps every existing value.
+    let mut s = session(8, "rgb");
+    let made = [
+        ("selectiveColor", json!({"method": "absolute", "reds": [10, -20, 30, -40], "colors": "blues", "yellow": 40})),
+        ("colorLookup", json!({"lut": "warm", "interpolation": "tetrahedral", "dither": true})),
+    ];
+    for (kind, p) in made {
+        let id = photocraft_doc::LayerId(s.execute(&format!("layer.newAdjustmentLayer.{kind}"), p).unwrap()["layer"].as_u64().unwrap());
+        let before = adjustment_of(&s, id);
+        for (k, p, key) in cases.iter().filter(|c| c.0 == kind) {
+            let mut p = p.clone();
+            p["layer"] = json!(id.0);
+            named(s.execute("layer.setAdjustment", p.clone()), key, &format!("setAdjustment {k} {p}"));
+            assert_eq!(adjustment_of(&s, id), before, "{p}");
+        }
+        // Null still means "not given": the update keeps everything.
+        let nulls = json!({"layer": id.0, "method": null, "reds": null, "colors": null, "lut": null, "interpolation": null, "dither": null});
+        s.execute("layer.setAdjustment", nulls).unwrap();
+        assert_eq!(adjustment_of(&s, id), before, "{kind}: nulls");
+    }
+    // Well-typed values reach the model.
+    match adjustment_of(&s, doc(&s).layers[1].id) {
+        Adjustment::SelectiveColor { relative: false, adjustments } => {
+            assert_eq!(adjustments[0], [10.0, -20.0, 30.0, -40.0]);
+            assert_eq!(adjustments[4], [0.0, 0.0, 40.0, 0.0]);
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(matches!(adjustment_of(&s, doc(&s).layers[2].id), Adjustment::ColorLookup { lut: Some(_), tetrahedral: true, dither: true, .. }));
 }
 
 #[test]
@@ -222,4 +322,70 @@ fn new_kinds_round_trip_through_psd_and_pcraft() {
     for (a, b) in d.layers.iter().zip(&again.layers) {
         assert_eq!(a.content, b.content);
     }
+}
+
+fn mask_at(s: &Session, x: i32, y: i32) -> f32 {
+    let d = s.active().unwrap();
+    d.doc.layer(d.active_layer.unwrap()).unwrap().mask.as_ref().unwrap().surface.sample_channel(x, y, 0)
+}
+
+/// #780: with the layer mask targeted, Invert (⌘I) inverts the mask, past the canvas too, and
+/// leaves the layer's pixels alone; one history step.
+#[test]
+fn invert_with_the_mask_targeted_inverts_the_mask() {
+    for depth in DEPTHS {
+        let mut s = session(depth, "rgb");
+        s.execute("select.rect", json!({"x": 24, "y": 0, "width": 24, "height": 32})).unwrap();
+        s.execute("layer.layerMask.revealSelection", json!({})).unwrap();
+        s.execute("select.deselect", json!({})).unwrap();
+        let (pixels, off_canvas) = (rgba(&s, 3, 3), mask_at(&s, -500, 3));
+        let steps = s.active().unwrap().history.past_len();
+        s.execute("image.adjustments.invert", json!({"target": "mask"})).unwrap();
+        assert_eq!((mask_at(&s, 3, 3), mask_at(&s, 30, 3)), (1.0, 0.0), "depth {depth}");
+        assert_eq!(mask_at(&s, -500, 3), 1.0 - off_canvas, "the mask's untouched area inverts too");
+        assert_eq!(rgba(&s, 3, 3), pixels, "the layer is untouched");
+        assert_eq!(s.active().unwrap().history.past_len(), steps + 1);
+        // Through a selection, only the selected part.
+        s.execute("select.rect", json!({"x": 0, "y": 0, "width": 10, "height": 32})).unwrap();
+        s.execute("image.adjustments.invert", json!({"target": "mask"})).unwrap();
+        assert_eq!((mask_at(&s, 3, 3), mask_at(&s, 12, 3), mask_at(&s, 30, 3)), (0.0, 1.0, 0.0));
+        for _ in 0..3 {
+            s.undo(); // invert, select, invert
+        }
+        assert_eq!((mask_at(&s, 3, 3), mask_at(&s, 30, 3), mask_at(&s, -500, 3)), (0.0, 1.0, off_canvas));
+    }
+}
+
+/// #780: a targeted mask enables Invert (and filters) on layers without pixels, such as an
+/// adjustment layer; viewing the mask (⌥-click) targets it too.
+#[test]
+fn a_targeted_mask_enables_editing_it_on_any_layer() {
+    let mut s = session(8, "rgb");
+    s.execute("layer.newAdjustmentLayer.levels", json!({})).unwrap();
+    s.execute("layer.layerMask.revealAll", json!({})).unwrap();
+    let mask = json!({"target": "mask"});
+    assert!(!s.is_enabled("image.adjustments.invert"), "no pixels to invert");
+    assert!(s.is_enabled_with("image.adjustments.invert", &mask));
+    assert!(s.is_enabled_with("filter.blur.gaussianBlur", &mask));
+    assert!(!s.is_enabled_with("image.adjustments.desaturate", &mask), "only what edits the mask");
+    s.execute("image.adjustments.invert", mask.clone()).unwrap();
+    assert_eq!((mask_at(&s, 3, 3), mask_at(&s, -500, -500)), (0.0, 0.0), "reveal all → hide all");
+    s.execute("view.layerMask", json!({"mode": "gray"})).unwrap();
+    assert!(s.is_enabled("image.adjustments.invert"), "the mask view targets the mask");
+    s.execute("image.adjustments.invert", json!({})).unwrap();
+    assert_eq!(mask_at(&s, 3, 3), 1.0);
+    // A filter on a pixel layer's targeted mask leaves the pixels alone.
+    s.execute("layer.delete", json!({})).unwrap();
+    s.execute("select.rect", json!({"x": 24, "y": 0, "width": 24, "height": 32})).unwrap();
+    s.execute("layer.layerMask.revealSelection", json!({})).unwrap();
+    s.execute("select.deselect", json!({})).unwrap();
+    let pixels = rgba(&s, 23, 3);
+    s.execute("filter.blur.gaussianBlur", json!({"radius": 3, "target": "mask"})).unwrap();
+    assert!(mask_at(&s, 23, 3) > 0.0 && mask_at(&s, 23, 3) < 1.0, "the mask's edge is blurred");
+    assert_eq!(rgba(&s, 23, 3), pixels);
+    // No mask: an error, not the layer's pixels.
+    s.execute("layer.layerMask.delete", json!({})).unwrap();
+    assert!(!s.is_enabled_with("image.adjustments.invert", &mask));
+    assert!(s.execute("image.adjustments.invert", mask).is_err());
+    assert_eq!(rgba(&s, 23, 3), pixels);
 }

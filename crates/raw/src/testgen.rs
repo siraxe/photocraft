@@ -396,6 +396,8 @@ pub struct DngSpec {
     pub default_crop: Option<([u32; 2], [u32; 2])>,
     /// Double-precision origin override for malformed-metadata regression tests.
     pub default_crop_origin_double: Option<[f64; 2]>,
+    /// A DefaultCropSize with no DefaultCropOrigin (`default_crop` must be `None`).
+    pub default_crop_size_only: Option<[u32; 2]>,
     pub linearization: Option<Vec<u16>>,
     /// (illuminant code, ColorMatrix row-major)
     pub color_matrix1: Option<(u16, [f64; 9])>,
@@ -429,6 +431,7 @@ impl DngSpec {
             active_area: None,
             default_crop: None,
             default_crop_origin_double: None,
+            default_crop_size_only: None,
             linearization: None,
             color_matrix1: None,
             color_matrix2: None,
@@ -564,6 +567,8 @@ impl DngSpec {
             raw.push((50720, Val::Long(s.to_vec())));
         } else if let Some(origin) = self.default_crop_origin_double {
             raw.push((50719, Val::Double(origin.to_vec())));
+        } else if let Some(size) = self.default_crop_size_only {
+            raw.push((50720, Val::Long(size.to_vec())));
         }
         if let Some(o) = &self.opcode_list2 {
             raw.push((51009, Val::Undefined(o.clone())));
@@ -658,7 +663,7 @@ pub struct Cr2Spec {
     pub slices: Vec<usize>,
     /// Image borders: left, top, right, bottom (inclusive), as in SensorInfo.
     pub borders: Option<[u16; 4]>,
-    /// As-shot RGGB levels written to ColorData at word offset 0x3F.
+    /// As-shot RGGB levels written to ColorData at word offset 0x47 (the PowerShot version).
     pub wb_rggb: Option<[u16; 4]>,
     pub orientation: u16,
     /// Canon model ID written to MakerNote tag 0x0010.
@@ -698,9 +703,14 @@ impl Cr2Spec {
             mn.push((0x00E0, Val::Short(vec![34, w as u16, h as u16, 0, 0, l, tp, r, b, 0, 0, 0, 0, 0, 0, 0, 0])));
         }
         if let Some(wb) = self.wb_rggb {
-            let mut cd = vec![0u16; 1273];
-            cd[0x3F..0x43].copy_from_slice(&wb);
-            mn.push((0x4001, Val::Short(cd)));
+            // Canon writes ColorData (0x4001) as UNDEFINED bytes that are 16-bit words; the
+            // WB_RGGBLevelsAsShot of the PowerShot version sits at word offset 0x47 (the EOS
+            // versions use 0x3F — see as_shot_wb).
+            let mut cd = vec![0u8; 2 * 1273];
+            for (i, v) in wb.iter().enumerate() {
+                cd[2 * (0x47 + i)..2 * (0x47 + i) + 2].copy_from_slice(&v.to_le_bytes());
+            }
+            mn.push((0x4001, Val::Undefined(cd)));
         }
         let mut exif: Vec<(u16, Val)> = vec![(33434, Val::Rational(vec![(1, 100)]))];
         if !mn.is_empty() {
@@ -766,6 +776,39 @@ pub fn tiff_ep(make: &str, width: usize, height: usize, data: &[u16], cfa: [u8; 
         (279, Val::Long(vec![12])),
         (330, Val::Ifds(vec![raw_ifd])),
     ]);
+    t.chain = vec![ifd0];
+    t.build()
+}
+
+/// A synthetic Nikon NEF with a Huffman-compressed (34713) strip: IFD0 with
+/// Make and an EXIF IFD whose maker note (`Nikon\0`, version 2.10, then an
+/// embedded TIFF in the given byte order) holds `note_tags` (for example
+/// `0x0096`, the decode table, and `0x003d`, BlackLevel).
+pub fn nef_compressed(width: usize, height: usize, bits: u16, strip: Vec<u8>, cfa: [u8; 4], note_big_endian: bool, note_tags: Vec<(u16, Val)>) -> Vec<u8> {
+    let mut note = TiffBuilder { big_endian: note_big_endian, ..Default::default() };
+    let n = note.ifd(note_tags);
+    note.chain = vec![n];
+    let mut maker = b"Nikon\0\x02\x10\0\0".to_vec();
+    maker.extend(note.build());
+    let mut t = TiffBuilder::default();
+    let len = strip.len();
+    let strip = t.blob(strip);
+    let raw_ifd = t.ifd(vec![
+        (254, Val::Long(vec![0])),
+        (256, Val::Long(vec![width as u32])),
+        (257, Val::Long(vec![height as u32])),
+        (258, Val::Short(vec![bits])),
+        (259, Val::Short(vec![34713])),
+        (262, Val::Short(vec![32803])),
+        (273, Val::Blobs(vec![strip])),
+        (277, Val::Short(vec![1])),
+        (278, Val::Long(vec![height as u32])),
+        (279, Val::Long(vec![len as u32])),
+        (33421, Val::Short(vec![2, 2])),
+        (33422, Val::Byte(cfa.to_vec())),
+    ]);
+    let exif = t.ifd(vec![(37500, Val::Undefined(maker))]);
+    let ifd0 = t.ifd(vec![(271, Val::Ascii("NIKON CORPORATION".into())), (330, Val::Ifds(vec![raw_ifd])), (34665, Val::Ifds(vec![exif]))]);
     t.chain = vec![ifd0];
     t.build()
 }

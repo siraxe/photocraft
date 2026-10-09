@@ -152,6 +152,53 @@ fn a_configured_but_disabled_effect_stays_discoverable_in_the_panel() {
     assert!(effect_row.is_positive(), "a configured disabled effect remains visible for discovery");
 }
 
+/// #1622: the eyes on the effects rows work. The "Effects" eye hides and shows the whole list, an
+/// effect's eye only that effect; each click is one history step, keeps the effect's settings and
+/// never opens the Layer Style dialog.
+#[test]
+fn the_eyes_on_the_effects_rows_hide_and_show_effects() {
+    let mut s = photocraft_engine::Session::new();
+    s.execute("file.new", json!({"width": 64, "height": 48})).unwrap();
+    let id = s.execute("layer.new.layer", json!({"name": "Styled"})).unwrap()["layer"].as_u64().unwrap();
+    s.execute("layer.layerStyle.dropShadow", json!({"layer": id})).unwrap();
+    s.execute("layer.layerStyle.colorOverlay", json!({"layer": id})).unwrap();
+    let mut h = harness(s, 1.0, "promedium", 290.0);
+    // (the whole list is on, each effect is on).
+    let fx = |h: &Harness<'_, PhotocraftApp>| {
+        let fx = &h.state().session.active().unwrap().doc.layer(photocraft_doc::LayerId(id)).unwrap().effects;
+        (fx.enabled, fx.items.iter().map(Effect::enabled).collect::<Vec<_>>())
+    };
+    let steps = |h: &Harness<'_, PhotocraftApp>| h.state().session.active().unwrap().history.past_len();
+    let eye = |h: &Harness<'_, PhotocraftApp>, row: &str| {
+        let r = h.get_by_label(row).rect();
+        pos2(r.left() + 15.0, r.center().y)
+    };
+    let (settings, n) = (h.state().session.active().unwrap().doc.layer(photocraft_doc::LayerId(id)).unwrap().effects.items.clone(), steps(&h));
+    assert_eq!(fx(&h), (true, vec![true, true]));
+
+    let p = eye(&h, "Color Overlay");
+    click(&mut h, p);
+    assert_eq!(fx(&h), (true, vec![true, false]), "only the clicked effect is hidden");
+    assert_eq!(steps(&h), n + 1, "one history step");
+    assert_eq!(h.state().session.active().unwrap().history.undo_label(), Some("Hide Color Overlay"));
+    // The row stays (its eye box empty), and a click there shows the effect again.
+    let p = eye(&h, "Color Overlay");
+    click(&mut h, p);
+    assert_eq!(fx(&h), (true, vec![true, true]));
+
+    let p = eye(&h, "Effects");
+    click(&mut h, p);
+    assert_eq!(fx(&h), (false, vec![true, true]), "the Effects eye hides the list; each effect keeps its own eye");
+    assert_eq!(h.state().session.active().unwrap().history.undo_label(), Some("Hide Layer Effects"));
+    let p = eye(&h, "Effects");
+    click(&mut h, p);
+    assert_eq!(fx(&h), (true, vec![true, true]));
+
+    assert_eq!(h.state().session.active().unwrap().doc.layer(photocraft_doc::LayerId(id)).unwrap().effects.items, settings, "settings survive");
+    assert_eq!(steps(&h), n + 4);
+    assert!(h.state().ui.dialogs.is_empty(), "an eye click never opens the Layer Style dialog");
+}
+
 fn groups_open(s: &photocraft_engine::Session) -> Vec<bool> {
     s.active().unwrap().doc.walk().into_iter().filter_map(|(_, _, l)| if let LayerContent::Group(g) = &l.content { Some(g.expanded) } else { None }).collect()
 }
@@ -221,4 +268,93 @@ fn dragging_down_the_eyes_sweeps_visibility_without_reordering() {
         click(&mut h, p);
         assert!(visible(&h, rows[1].layer));
     }
+}
+
+/// #736: a layer row dropped on the footer's New Layer button is duplicated, on New Group it is
+/// grouped, on Delete it is deleted; a row outside the selection goes alone.
+#[test]
+fn dropping_a_row_on_the_footer_buttons_duplicates_groups_and_deletes() {
+    let mut s = photocraft_engine::Session::new();
+    s.execute("file.new", json!({"width": 64, "height": 48})).unwrap();
+    for i in 0..3 {
+        s.execute("layer.new.layer", json!({"name": format!("L{i}")})).unwrap();
+    }
+    let mut h = harness(s, 1.0, "promedium", 290.0);
+    let names = |h: &Harness<'_, PhotocraftApp>| h.state().session.active().unwrap().doc.layers.iter().map(|l| l.name.clone()).collect::<Vec<_>>();
+    let drag_to = |h: &mut Harness<'static, PhotocraftApp>, row: usize, label: &str| {
+        let from = recorded(&h.ctx)[row].row.center();
+        let to = h.get_by_label(label).rect().center();
+        h.event(egui::Event::PointerMoved(from));
+        h.run_steps(1);
+        h.event(egui::Event::PointerButton { pos: from, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+        h.run_steps(1);
+        for k in 1..=8 {
+            h.event(egui::Event::PointerMoved(from + (to - from) * (k as f32 / 8.0)));
+            h.run_steps(1);
+        }
+        h.event(egui::Event::PointerButton { pos: to, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+        h.run_steps(3);
+    };
+    // Rows top to bottom: L2 (selected), L1, L0, Background. L1 isn't selected: it goes alone.
+    drag_to(&mut h, 1, "Create a new layer");
+    assert_eq!(names(&h), ["Background", "L0", "L1", "L1 copy", "L2"]);
+    let steps = h.state().session.active().unwrap().history.past_len();
+    // Rows: L2, L1 copy (now selected), L1, L0, Background.
+    drag_to(&mut h, 3, "Create a new group");
+    let doc = &h.state().session.active().unwrap().doc;
+    let group = doc.layers.iter().find(|l| l.is_group()).expect("a group");
+    let LayerContent::Group(g) = &group.content else { panic!("not a group") };
+    assert_eq!(g.children.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(), ["L0"]);
+    assert_eq!(h.state().session.active().unwrap().history.past_len(), steps + 1, "one undo step");
+    let n = h.state().session.active().unwrap().doc.layers.len();
+    drag_to(&mut h, 0, "Delete layer");
+    assert!(!names(&h).iter().any(|n| n == "L2"));
+    assert_eq!(h.state().session.active().unwrap().doc.layers.len(), n - 1);
+}
+
+/// Photoshop: ⌥ held when a dragged row is dropped copies the layer there (one "Duplicate Layer"
+/// step) and leaves the original in place; without ⌥ the same drag moves it.
+#[test]
+fn alt_dragging_a_row_drops_a_copy_and_a_plain_drag_moves() {
+    let mut s = photocraft_engine::Session::new();
+    s.execute("file.new", json!({"width": 64, "height": 48})).unwrap();
+    for i in 0..3 {
+        s.execute("layer.new.layer", json!({"name": format!("L{i}")})).unwrap();
+    }
+    let mut h = harness(s, 1.0, "promedium", 290.0);
+    let names = |h: &Harness<'_, PhotocraftApp>| h.state().session.active().unwrap().doc.layers.iter().map(|l| l.name.clone()).collect::<Vec<_>>();
+    let steps = |h: &Harness<'_, PhotocraftApp>| h.state().session.active().unwrap().history.past_len();
+    // Drag row `from` to the upper quarter of row `to` (= above it), with `release` held on drop.
+    let drag = |h: &mut Harness<'static, PhotocraftApp>, from: usize, to: usize, release: Modifiers| {
+        let rows = recorded(&h.ctx);
+        let a = rows[from].row.center();
+        let b = pos2(rows[to].row.center().x, rows[to].row.top() + rows[to].row.height() * 0.25);
+        h.event(egui::Event::PointerMoved(a));
+        h.run_steps(1);
+        h.event(egui::Event::PointerButton { pos: a, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+        h.run_steps(1);
+        for k in 1..=8 {
+            h.event(egui::Event::PointerMoved(a + (b - a) * (k as f32 / 8.0)));
+            h.run_steps(1);
+        }
+        // ⌥ only needs to be down when the row is dropped.
+        h.event(egui::Event::ModifiersChanged(release));
+        h.run_steps(1);
+        h.event(egui::Event::PointerButton { pos: b, button: PointerButton::Primary, pressed: false, modifiers: release });
+        h.run_steps(1);
+        h.event(egui::Event::ModifiersChanged(Modifiers::NONE));
+        h.run_steps(3);
+    };
+    // Rows top to bottom: L2, L1, L0, Background. ⌥-drag L0 above L2.
+    let before = steps(&h);
+    drag(&mut h, 2, 0, Modifiers::ALT);
+    assert_eq!(names(&h), ["Background", "L0", "L1", "L2", "L0 copy"]);
+    assert_eq!(steps(&h), before + 1, "one undo step");
+    assert_eq!(h.state().session.active().unwrap().history.undo_label(), Some("Duplicate Layer"));
+    let active = h.state().session.active().unwrap().active_layer;
+    assert_eq!(active, h.state().session.active().unwrap().doc.layers.last().map(|l| l.id), "the copy is active");
+    // Rows: L0 copy, L2, L1, L0, Background. A plain drag of L1 above L0 copy moves it.
+    drag(&mut h, 2, 0, Modifiers::NONE);
+    assert_eq!(names(&h), ["Background", "L0", "L2", "L0 copy", "L1"]);
+    assert_eq!(h.state().session.active().unwrap().history.undo_label(), Some("Reorder Layers"));
 }
