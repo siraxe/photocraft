@@ -190,23 +190,6 @@ pub fn grouped_presets(presets: &[paint::BrushPreset]) -> Vec<(String, Vec<usize
     out
 }
 
-/// Does the current brush match `preset` (everything but colour, size and the tool state that
-/// picking a preset keeps: smoothing and the section locks)? Cheap fields first: the full
-/// comparison clones the preset and its tip.
-pub fn is_current(preset: &BrushSettings, brush: &BrushSettings) -> bool {
-    preset.hardness == brush.hardness
-        && preset.spacing == brush.spacing
-        && preset.tip == brush.tip
-        && BrushSettings {
-            color: brush.color,
-            size: brush.size,
-            background: brush.background,
-            smoothing: brush.smoothing.clone(),
-            locks: brush.locks.clone(),
-            ..preset.clone()
-        } == *brush
-}
-
 /// A fresh "Brush N" name.
 pub(crate) fn new_preset_name(presets: &[paint::BrushPreset]) -> String {
     (1..).map(|n| format!("Brush {n}")).find(|n| !presets.iter().any(|p| &p.name == n)).unwrap_or_else(|| "Brush".into())
@@ -316,8 +299,13 @@ fn settings_tab(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
             let on = section_flag(&mut b, section).is_none_or(|f| *f);
             egui::ScrollArea::vertical().id_salt(("brush-section", section)).max_height(450.0).auto_shrink([false, false]).show(ui, |ui| {
                 ui.set_width(WIDTH - 204.0);
-                // A section that's off shows its options greyed out (Photoshop).
-                ui.add_enabled_ui(on, |ui| section_body(ui, &mut b, section, &app.session.tools.presets));
+                // A section that's off shows its options greyed out (Photoshop). A tip picked in
+                // the grid picks the whole preset: its sections show in the list, and the engine
+                // records it as the current preset (identity, so duplicates stay distinct). The
+                // tip-field diff commit_gesture sends afterwards is already applied: a no-op.
+                ui.add_enabled_ui(on, |ui| section_body(ui, &mut b, section, &app.session.tools.presets, app.session.tools.current_preset.as_deref()))
+                    .inner
+                    .inspect(|name| run_or_status(app, "tools.setBrush", json!({ "preset": name })));
             });
         });
     });

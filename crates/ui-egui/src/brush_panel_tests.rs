@@ -747,11 +747,11 @@ fn options_bar_reaches_brush_settings_and_the_preset_library() {
         assert!(h.query_by_label(&group).is_some(), "group {group}");
     }
     let target = presets.iter().find(|p| p.group == "Dry Media").or(presets.last()).unwrap().name.clone();
-    assert!(!is_current(&paint::presets::find(&presets, &target).unwrap().brush, &h.state().session.tools.brush));
+    assert_ne!(h.state().session.tools.current_preset.as_deref(), Some(target.as_str()));
     h.get_by_label(&target).click();
     h.run_steps(3);
     assert_eq!(last_journal(h.state()).unwrap(), ("tools.setBrush".to_string(), json!({ "preset": target })));
-    assert!(is_current(&paint::presets::find(&presets, &target).unwrap().brush, &h.state().session.tools.brush));
+    assert_eq!(h.state().session.tools.current_preset.as_deref(), Some(target.as_str()));
     // A click picks and keeps the picker open; the chip's click closes it again.
     assert!(h.state().ui.brush_picker.is_some());
     h.get_by_label("Brush Preset picker").click();

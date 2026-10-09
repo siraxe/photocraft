@@ -621,6 +621,8 @@ fn presets_save(s: &mut Session, p: &Value) -> Result<Value> {
         None => s.tools.brush.clone(),
     };
     upsert(s, BrushPreset { name: name.clone(), brush, builtin: false, group: String::new(), folder: Vec::new() });
+    // The saved brush is the current brush now (Photoshop selects the brush it just saved).
+    s.tools.current_preset = Some(name.clone());
     Ok(json!({ "name": name, "count": s.tools.presets.len() }))
 }
 
@@ -660,6 +662,19 @@ fn presets_update(s: &mut Session, p: &Value) -> Result<Value> {
     let (name, group) = (pr.name.clone(), pr.group.clone());
     s.brush_presets_changed();
     Ok(json!({ "name": name, "group": group }))
+}
+
+/// Mark a preset as the one the current brush was picked from. The tip grids' click copies only
+/// the tip fields (the rest of the brush stays), so the engine cannot infer the preset from the
+/// brush: the UI names it. Selection is by identity, so look-alike duplicates stay distinct.
+fn presets_set_current(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "brush.presets.setCurrent";
+    let name = name_param(p, cmd)?;
+    if !s.tools.presets.iter().any(|x| x.name.eq_ignore_ascii_case(&name)) {
+        return Err(bad(cmd, format!("no brush preset named `{name}`")));
+    }
+    s.tools.current_preset = Some(name.clone());
+    Ok(json!({ "name": name }))
 }
 
 fn has_selection_and_pixels(s: &Session) -> std::result::Result<(), String> {
@@ -885,6 +900,7 @@ pub fn specs() -> Vec<CommandSpec> {
             true
         ),
         spec!("brush.presets.delete", "Delete Brush Preset", r##"{"name":string}"##, always, presets_delete, true),
+        spec!("brush.presets.setCurrent", "Set Current Brush Preset", r##"{"name":string}"##, always, presets_set_current, true),
         spec!("brush.defineFromSelection", "Define Brush Preset…", r##"{"name":string}"##, has_selection_and_pixels, define_from_selection, true),
         spec!("brush.get", "Get Brush", "{}", always, |s, _| Ok(brush_json(&s.tools.brush)), false),
         spec!("tools.setBrush", "Set Brush", r##"{"preset":name?,"reset":bool?,…BrushSettings fields (camelCase, deep-merged)}"##, always, set_brush, true),
