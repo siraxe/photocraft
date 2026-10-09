@@ -1398,6 +1398,9 @@
 	Stroke	筆畫
 	Stroke Catch-up	筆畫追補
 	Stroke:	筆畫：
+	Location	位置
+	Location:	位置：
+	Preserve Transparency	保留透明區域
 	Style	樣式
 	Style Options	樣式選項
 	Style Options…	樣式選項…
@@ -2226,6 +2229,11 @@ fontWeight	Italic	斜體
 	Rotate View Tool	旋轉檢視工具
 	Reset View	重設檢視
 	Drag around the centre to rotate the view  ·  Shift constrains to 15°	繞中心拖曳以旋轉檢視  ·  Shift 限制為 15°
+
+# Painting symmetry presets.
+	Dual Axis	雙軸
+	Diagonal	對角線
+	Transform Symmetry	變形對稱軸
 
 # Eyedropper Sample Size and Sample (#1649).
 	Point Sample	取樣點

@@ -45,7 +45,7 @@ pub struct Param {
 /// Parse the registry's parameter notation, e.g.
 /// `{"radius":0.1..1000=1,"method":"spin|zoom","monochromatic":bool,"seed":u32=0,"horizontal":px=0}`.
 pub fn parse_spec(spec: &str) -> Vec<Param> {
-    let inner = spec.trim().trim_start_matches('{').trim_end_matches('}');
+    let inner = object_body(spec);
     let mut out = Vec::new();
     // Split on commas that start a new `"key":` (not inside strings or brackets).
     let mut parts: Vec<String> = Vec::new();
@@ -113,6 +113,30 @@ pub fn parse_spec(spec: &str) -> Vec<Param> {
     out
 }
 
+/// The inside of the spec's leading `{…}` object. Notes after it, like `→ {…}` results or
+/// `(per-range [c,m,y,k] arrays: …)`, are documentation: read as parameters, their commas split
+/// off junk fields and glued the note onto the last parameter (Selective Color's `"reds":json`
+/// became a number field, and its OK then failed).
+fn object_body(spec: &str) -> &str {
+    let s = spec.trim();
+    let Some(body) = s.strip_prefix('{') else { return s };
+    let (mut depth, mut in_str) = (0i32, false);
+    for (i, ch) in body.char_indices() {
+        match ch {
+            '"' => in_str = !in_str,
+            '[' | '{' if !in_str => depth += 1,
+            ']' | '}' if !in_str => {
+                if depth == 0 {
+                    return body.get(..i).unwrap_or(body);
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    body.trim_end_matches('}')
+}
+
 /// Parameter keys measured in pixels (scaled for proxy previews).
 fn is_pixel_param(key: &str) -> bool {
     matches!(
@@ -169,6 +193,7 @@ pub fn has_dialog(command: &str) -> bool {
                 | "view.proofSetup"
                 | "layer.layerStyle.globalLight"
                 | "image.mode.colorTable"
+                | "edit.definePattern"
         ))
         && photocraft_engine::commands::find(command).is_some_and(|c| !parse_spec(c.params).is_empty())
 }
@@ -204,6 +229,10 @@ pub fn open(app: &mut PhotocraftApp, command: &str) -> Option<u64> {
     }
     if command == "image.rotation.arbitrary" {
         straighten_defaults(app, &mut fields);
+    }
+    // Photoshop's Pattern Name dialog starts from the name the pattern would get anyway.
+    if command == "edit.definePattern" {
+        fields.insert("name".into(), json!(photocraft_engine::pattern_cmds::default_name(&app.session)));
     }
     if parse_spec(spec.params).iter().any(|p| p.kind == Kind::Document) {
         // The document picker lists every open document (params refer to them by index).
@@ -439,8 +468,22 @@ pub fn params_of(f: &Map<String, Value>) -> Value {
 
 /// Compute a preview document: run `command` with `params` on the proxy (scaled) copy of `doc`.
 pub fn preview_document(doc: &Document, active: Option<photocraft_doc::LayerId>, command: &str, params: &Value, k: u32) -> Option<Document> {
+    preview_document_with(doc, active, command, params, k, None)
+}
+
+/// [`preview_document`] whose filter stops early, giving `None`, once `cancel` is cancelled
+/// (a preview superseded by newer dialog values).
+pub fn preview_document_with(
+    doc: &Document,
+    active: Option<photocraft_doc::LayerId>,
+    command: &str,
+    params: &Value,
+    k: u32,
+    cancel: Option<&photocraft_engine::jobs::JobCtx>,
+) -> Option<Document> {
     let proxy = crate::proxy::proxy_document(doc, k);
     let mut s = photocraft_engine::Session::new();
+    s.set_inline_job_ctx(cancel.cloned());
     s.add_document(proxy, None);
     if let Some(id) = active {
         s.select_layer(id).ok()?;
@@ -465,6 +508,9 @@ pub fn preview_document(doc: &Document, active: Option<photocraft_doc::LayerId>,
 pub struct FilterPreview {
     pub key: FilterPreviewKey,
     pub result: Option<Arc<Document>>,
+    /// OK was pressed and the filter runs as a background job: the preview stays on screen until
+    /// the job lands, so the canvas doesn't flash the unfiltered image in between.
+    pub committing: bool,
 }
 
 /// Match the full request before accepting a worker result, including a reopened dialog.
@@ -678,5 +724,62 @@ mod tests {
                 assert!(!changed(half, 64 / k as i32), "{depth:?} k={k}: nothing outside the selection");
             }
         }
+    }
+
+    #[test]
+    fn define_pattern_asks_for_a_name() {
+        // Edit › Define Pattern… named the pattern after the document without asking ("ask", then
+        // "ask 2"). Photoshop's Pattern Name dialog starts from that name and lets you change it.
+        let spec = photocraft_engine::commands::find("edit.definePattern").unwrap();
+        assert_eq!(parse_spec(spec.params), vec![Param { key: "name".into(), kind: Kind::Text }, Param { key: "rect".into(), kind: Kind::Json }]);
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"width": 8, "height": 8, "name": "ask.jpg"})).unwrap();
+        let ctx = egui::Context::default();
+        let define = |app: &mut PhotocraftApp, name: Option<&str>| {
+            crate::menus::invoke(app, &ctx, "edit.definePattern", Value::Null).unwrap();
+            let d = app.ui.dialogs.last().expect("Define Pattern opens a dialog").clone();
+            let shown = d.fields["name"].as_str().unwrap().to_string();
+            if let Some(n) = name {
+                app.ui.dialog_mut(d.id).unwrap().fields.insert("name".into(), json!(n));
+            }
+            crate::dialogs::confirm(app, d.id).unwrap();
+            shown
+        };
+        assert_eq!(define(&mut app, Some("Bricks")), "ask", "prefilled with the document's name");
+        assert_eq!(define(&mut app, None), "ask", "Bricks didn't take it");
+        assert_eq!(define(&mut app, None), "ask 2", "numbered past the library");
+        let names: Vec<&str> = app.session.patterns.items.iter().map(|p| p.name.as_str()).collect();
+        for n in ["Bricks", "ask", "ask 2"] {
+            assert!(names.contains(&n), "{n} in {names:?}");
+        }
+    }
+
+    #[test]
+    fn notes_after_a_spec_are_not_parameters() {
+        // A note after the object, like Selective Color's "(per-range [c,m,y,k] arrays: …)", was
+        // parsed as parameters: its commas split off junk fields and it glued itself onto the last
+        // one, so "reds":json became a number field the dialog showed and sent.
+        let p = parse_spec(r#"{"a":0..10=1,"b":json} (notes [x,y,z] here, and more) → {"c":id}"#);
+        assert_eq!(p, vec![Param { key: "a".into(), kind: Kind::Range { min: 0.0, max: 10.0, default: 1.0 } }, Param { key: "b".into(), kind: Kind::Json }]);
+        // Every command with a schema dialog has plain parameter keys.
+        for c in photocraft_engine::command_specs().iter().filter(|c| has_dialog(c.id)) {
+            for p in parse_spec(c.params) {
+                assert!(p.key.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_'), "{}: junk parameter {:?}", c.id, p.key);
+            }
+        }
+    }
+
+    #[test]
+    fn selective_color_dialog_ok_applies() {
+        // With the junk `reds: 0` the dialog's OK failed (`reds` must be an array of 4 numbers).
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        app.run("file.new", json!({"width": 8, "height": 8})).unwrap();
+        let id = open(&mut app, "image.adjustments.selectiveColor").unwrap();
+        let fields = app.ui.dialogs.last().unwrap().fields.clone();
+        assert!(fields.keys().all(|k| k.starts_with("__") || k.chars().all(|ch| ch.is_ascii_alphanumeric())), "{fields:?}");
+        assert!(!fields.contains_key("reds"), "the per-range arrays are not dialog fields");
+        app.ui.dialog_mut(id).unwrap().fields.insert("black".into(), json!(40.0));
+        crate::dialogs::confirm(&mut app, id).unwrap();
+        assert_eq!(app.session.journal.last().map(|j| j.0.as_str()), Some("image.adjustments.selectiveColor"));
     }
 }

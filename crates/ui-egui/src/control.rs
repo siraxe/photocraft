@@ -210,6 +210,9 @@ fn screen_point(app: &PhotocraftApp, x: f64, y: f64) -> [f32; 2] {
     [p.x, p.y]
 }
 
+/// The `dialog` id of the shell's own dialog (`workspace_ui`) in `ui.inspect` and `ui.dialog.*`.
+const SHELL_DIALOG: &str = "shell";
+
 pub fn handle(app: &mut PhotocraftApp, ctx: &egui::Context, req: &ControlRequest) -> Outcome {
     let saved = app.session.authorize;
     if let Some(gate) = app.services.automation_authorize {
@@ -528,6 +531,34 @@ fn dispatch(app: &mut PhotocraftApp, ctx: &egui::Context, req: &ControlRequest) 
             }
             ok(json!({"dialog": app.ui.open_dialog(kind, fields)}))
         }
+        // The shell's own dialog (Window › Workspace, View › Pixel Aspect Ratio › Custom, Show
+        // Extras Options, 32-bit Preview Options), listed by ui.inspect with the id "shell".
+        "ui.dialog.set" if s("dialog") == Some(SHELL_DIALOG) => {
+            let Some(field) = s("field") else { return err("need `dialog` and `field`") };
+            let value = p.get("value").cloned().unwrap_or(Value::Null);
+            match app.ui.shell.dialog.as_mut() {
+                Some((_, fields)) => {
+                    fields.insert(field.to_string(), value);
+                    ok(Value::Null)
+                }
+                None => err("no shell dialog is open"),
+            }
+        }
+        "ui.dialog.confirm" if s("dialog") == Some(SHELL_DIALOG) => {
+            let Some((kind, fields)) = app.ui.shell.dialog.clone() else { return err("no shell dialog is open") };
+            if let Some((command, params)) = crate::workspace_ui::dialog_command(&kind, &fields)
+                && let Some(authorize) = app.services.automation_command.as_ref()
+                && let Err(error) = authorize(command, &params)
+            {
+                return err(error);
+            }
+            wrap(crate::workspace_ui::confirm(app, ctx))
+        }
+        "ui.dialog.apply" if s("dialog") == Some(SHELL_DIALOG) => err("`ui.dialog.apply` is for Preferences; use `ui.dialog.confirm`"),
+        "ui.dialog.cancel" if s("dialog") == Some(SHELL_DIALOG) => match app.ui.shell.dialog.take() {
+            Some(_) => ok(Value::Null),
+            None => err("no such dialog"),
+        },
         "ui.dialog.set" => {
             let (Some(id), Some(field)) = (u("dialog"), s("field")) else { return err("need `dialog` and `field`") };
             let value = p.get("value").cloned().unwrap_or(Value::Null);
@@ -787,8 +818,11 @@ fn dispatch(app: &mut PhotocraftApp, ctx: &egui::Context, req: &ControlRequest) 
 /// Snapshot of everything on screen, addressable by id.
 pub fn inspect(app: &PhotocraftApp, ctx: &egui::Context) -> Value {
     let screen = ctx.content_rect();
-    let dialogs: Vec<Value> =
+    let mut dialogs: Vec<Value> =
         app.ui.dialogs.iter().map(|d| json!({"id": d.id, "kind": d.kind, "title": crate::dialogs::title(d), "fields": d.fields})).collect();
+    if let Some((kind, fields)) = &app.ui.shell.dialog {
+        dialogs.push(json!({"id": SHELL_DIALOG, "kind": kind, "title": crate::workspace_ui::title(kind), "fields": fields}));
+    }
     json!({
         "window": {"width": screen.width(), "height": screen.height(), "pixelsPerPoint": ctx.pixels_per_point()},
         "tool": app.ui.tool,
@@ -873,6 +907,43 @@ mod tests {
             Outcome::Done(v) => v,
             _ => panic!("{method}: expected an immediate reply"),
         }
+    }
+
+    #[test]
+    fn shell_dialogs_are_listed_and_driven_through_ui_dialog() {
+        // #1004: Window › Workspace and View dialogs live in `ui.shell.dialog`, and ui.inspect and
+        // ui.dialog.* only knew `ui.dialogs`.
+        let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+        let ctx = egui::Context::default();
+        let shell = |app: &mut PhotocraftApp| {
+            let v = call(app, &ctx, "ui.inspect", json!({}));
+            v["result"]["dialogs"].as_array().unwrap().iter().find(|d| d["id"] == "shell").cloned()
+        };
+        // Listed, then cancelled.
+        crate::menus::invoke(&mut app, &ctx, "window.workspace.newWorkspace", json!({})).unwrap();
+        let d = shell(&mut app).expect("the open shell dialog is listed");
+        assert_eq!((d["kind"].as_str(), d["title"].as_str()), (Some("newWorkspace"), Some("New Workspace")));
+        assert_eq!(call(&mut app, &ctx, "ui.dialog.cancel", json!({"dialog": "shell"}))["ok"], true);
+        assert!(app.ui.shell.dialog.is_none() && shell(&mut app).is_none());
+        assert_eq!(call(&mut app, &ctx, "ui.dialog.cancel", json!({"dialog": "shell"}))["ok"], false, "nothing left to cancel");
+        // A field set over control reaches OK.
+        crate::menus::invoke(&mut app, &ctx, "view.show.showExtrasOptions", json!({})).unwrap();
+        assert!(app.ui.view.show.notes);
+        assert_eq!(call(&mut app, &ctx, "ui.dialog.set", json!({"dialog": "shell", "field": "notes", "value": false}))["ok"], true);
+        assert_eq!(shell(&mut app).unwrap()["fields"]["notes"], false);
+        assert_eq!(call(&mut app, &ctx, "ui.dialog.confirm", json!({"dialog": "shell"}))["ok"], true);
+        assert!(!app.ui.view.show.notes && app.ui.shell.dialog.is_none());
+        // An OK that fails keeps the dialog open and says why.
+        crate::menus::invoke(&mut app, &ctx, "view.show.showExtrasOptions", json!({})).unwrap();
+        call(&mut app, &ctx, "ui.dialog.set", json!({"dialog": "shell", "field": "bogus", "value": true}));
+        let r = call(&mut app, &ctx, "ui.dialog.confirm", json!({"dialog": "shell"}));
+        assert_eq!(r["ok"], false);
+        assert!(r["error"].as_str().unwrap_or("").contains("bogus"), "{r}");
+        assert!(app.ui.shell.dialog.is_some());
+        // Apply is Preferences-only; numeric ids still address ordinary dialogs only.
+        assert_eq!(call(&mut app, &ctx, "ui.dialog.apply", json!({"dialog": "shell"}))["ok"], false);
+        assert_eq!(call(&mut app, &ctx, "ui.dialog.cancel", json!({"dialog": 0}))["ok"], false);
+        assert!(app.ui.shell.dialog.is_some());
     }
 
     #[test]

@@ -1407,6 +1407,9 @@
 	Stroke	Tah
 	Stroke Catch-up	Dotahování tahu
 	Stroke:	Tah:
+	Location	Umístění
+	Location:	Umístění:
+	Preserve Transparency	Zachovat průhlednost
 	Style	Styl
 	Style Options	Možnosti stylu
 	Style Options…	Možnosti stylu…
@@ -2249,6 +2252,11 @@ fontWeight	Italic	Kurzíva
 	Rotate View Tool	Nástroj otočení zobrazení
 	Reset View	Obnovit zobrazení
 	Drag around the centre to rotate the view  ·  Shift constrains to 15°	Tažením kolem středu otočíte zobrazení  ·  Shift omezí na 15°
+
+# Painting symmetry presets.
+	Dual Axis	Dvojitá osa
+	Diagonal	Diagonální
+	Transform Symmetry	Transformovat symetrii
 
 # Eyedropper Sample Size and Sample (#1649).
 	Point Sample	Bodový vzorek

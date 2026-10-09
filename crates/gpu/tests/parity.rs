@@ -464,6 +464,42 @@ fn incremental_updates_follow_the_document() {
     check(&mut g, &d, "opacity");
 }
 
+/// #1774: tiles shared across coordinates (a solid fill, a cleared area, the default pixel of a
+/// mask) upload once and are copied on the GPU, at 8 and 16 bits, in RGB and grayscale, on a new
+/// layer page and on an incremental update.
+#[test]
+fn shared_tiles_upload_once_and_copy() {
+    let Some(mut g) = gpu() else { return };
+    let (w, h) = (1100, 700);
+    for fmt in [PixelFormat::RGBA8, PixelFormat::RGBA16, PixelFormat { sample: SampleType::U16, ..PixelFormat::GRAYA8 }] {
+        let mut d = base_doc(w, h);
+        let mut l = Layer::raster("fill", fmt);
+        l.surface_mut().unwrap().fill_rect(Rect::new(30, 40, 90, 70), &[0.3, 0.6, 0.2, 0.9][..fmt.channels()]);
+        let mut m = LayerMask::reveal_all();
+        m.surface = photocraft_raster::Surface::with_default(PixelFormat::GRAY8, &[1.0]);
+        l.mask = Some(m);
+        d.layers.push(l);
+        check(&mut g, &d, &format!("{fmt:?} small"));
+        // Select All + Fill: the page grows (a new page), every full tile shares one.
+        let s = d.layers[1].surface_mut().unwrap();
+        s.fill_rect(Rect::new(0, 0, w as i32, h as i32), &[0.7, 0.2, 0.5, 0.8][..fmt.channels()]);
+        check(&mut g, &d, &format!("{fmt:?} filled"));
+        // Fill again (same page, incremental), then paint one tile and mask most of it.
+        let s = d.layers[1].surface_mut().unwrap();
+        s.fill_rect(Rect::new(0, 0, w as i32, h as i32), &[0.1, 0.9, 0.4, 0.6][..fmt.channels()]);
+        s.fill_rect(Rect::new(300, 300, 340, 320), &[1.0, 0.0, 0.0, 1.0][..fmt.channels()]);
+        let m = &mut d.layers[1].mask.as_mut().unwrap().surface;
+        m.fill_rect(Rect::new(0, 0, w as i32, h as i32), &[0.25]);
+        check(&mut g, &d, &format!("{fmt:?} refilled"));
+        // Clear the mask back to its (non-zero) default: its tiles go away.
+        d.layers[1].mask.as_mut().unwrap().surface = photocraft_raster::Surface::with_default(PixelFormat::GRAY8, &[1.0]);
+        check(&mut g, &d, &format!("{fmt:?} mask cleared"));
+        // Clear the layer: every tile goes away and reads as transparent again.
+        *d.layers[1].surface_mut().unwrap() = photocraft_raster::Surface::new(fmt);
+        check(&mut g, &d, &format!("{fmt:?} cleared"));
+    }
+}
+
 // ---- layer effects --------------------------------------------------------------------------
 
 use photocraft_doc::adjust::CurvePoint as Cp;

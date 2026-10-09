@@ -169,6 +169,63 @@ async fn command_list_filters() {
     client.cancel().await.unwrap();
 }
 
+/// Constructs strict tool-schema validators reject: a `$ref` / `$defs`, or a boolean in a schema
+/// position (`items: true`), anywhere in `schema`.
+fn strict_schema_problems(path: &str, schema: &Value, out: &mut Vec<String>) {
+    let Value::Object(m) = schema else {
+        if schema.is_boolean() {
+            out.push(format!("{path}: boolean schema {schema}"));
+        }
+        return;
+    };
+    for key in ["$ref", "$defs", "definitions"] {
+        if m.contains_key(key) {
+            out.push(format!("{path}: {key}"));
+        }
+    }
+    if let Some(Value::Object(props)) = m.get("properties") {
+        for (k, v) in props {
+            strict_schema_problems(&format!("{path}.properties.{k}"), v, out);
+        }
+    }
+    for key in ["items", "not"] {
+        if let Some(v) = m.get(key) {
+            strict_schema_problems(&format!("{path}.{key}"), v, out);
+        }
+    }
+    for key in ["anyOf", "oneOf", "allOf", "prefixItems"] {
+        for (i, v) in m.get(key).and_then(Value::as_array).into_iter().flatten().enumerate() {
+            strict_schema_problems(&format!("{path}.{key}[{i}]"), v, out);
+        }
+    }
+    if let Some(v) = m.get("additionalProperties").filter(|v| v.is_object()) {
+        strict_schema_problems(&format!("{path}.additionalProperties"), v, out);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tool_schemas_pass_strict_validators() {
+    // #1782: `ui_pointer`'s `items: true` and `command_batch`'s `$ref`/`$defs` made strict
+    // providers (e.g. Moonshot via Volcano Ark) reject the whole request.
+    let client = connect(PhotocraftMcp::headless()).await;
+    let tools = client.list_all_tools().await.unwrap();
+    let mut problems = Vec::new();
+    for t in &tools {
+        strict_schema_problems(&t.name, &Value::Object((*t.input_schema).clone()), &mut problems);
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+    let schema = |name: &str| Value::Object((*tools.iter().find(|t| t.name == name).unwrap().input_schema).clone());
+    // The inlined shapes still describe the arguments.
+    let event = &schema("ui_pointer")["properties"]["events"]["items"];
+    assert_eq!(event["type"], "object", "{event}");
+    for k in ["kind", "x", "y", "pressure"] {
+        assert!(event["properties"][k].is_object(), "ui_pointer event field {k}: {event}");
+    }
+    let step = &schema("command_batch")["properties"]["steps"]["items"];
+    assert!(step["properties"]["id"]["description"].as_str().is_some_and(|d| d.contains("layer.new.layer")), "{step}");
+    client.cancel().await.unwrap();
+}
+
 /// The backticked examples in every `id` property description of a schema.
 fn id_examples(schema: &Value, out: &mut Vec<String>) {
     match schema {
