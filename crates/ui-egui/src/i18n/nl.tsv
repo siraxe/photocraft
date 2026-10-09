@@ -1902,6 +1902,7 @@
 	Collapse group  ({key}-click: all groups)	Groep samenvouwen  ({key}-klik: alle groepen)
 	Create new brush from the current settings	Nieuw penseel maken van de huidige instellingen
 	Create new brush from these settings	Nieuw penseel maken van deze instellingen
+	Update the current brush with these settings	Huidig penseel bijwerken met deze instellingen
 	Delete brush	Penseel verwijderen
 	Drag the arrow to set the angle, the dots to set the roundness	Sleep de pijl om de hoek in te stellen, de stippen om de rondheid in te stellen
 	Expand	Uitvouwen

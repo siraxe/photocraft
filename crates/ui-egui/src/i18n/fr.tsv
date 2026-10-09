@@ -1891,6 +1891,7 @@
 	Collapse group  ({key}-click: all groups)	Réduire le groupe  ({key}-clic : tous les groupes)
 	Create new brush from the current settings	Créer un nouveau pinceau à partir des paramètres actuels
 	Create new brush from these settings	Créer un nouveau pinceau à partir de ces paramètres
+	Update the current brush with these settings	Mettre à jour le pinceau actuel avec ces paramètres
 	Delete brush	Supprimer le pinceau
 	Drag the arrow to set the angle, the dots to set the roundness	Faites glisser la flèche pour régler l'angle, les points pour régler l'arrondi
 	Expand	Développer

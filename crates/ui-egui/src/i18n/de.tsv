@@ -1912,6 +1912,7 @@
 	Collapse group  ({key}-click: all groups)	Gruppe einklappen  ({key}-Klick: alle Gruppen)
 	Create new brush from the current settings	Neuen Pinsel aus den aktuellen Einstellungen erstellen
 	Create new brush from these settings	Neuen Pinsel aus diesen Einstellungen erstellen
+	Update the current brush with these settings	Aktuellen Pinsel mit diesen Einstellungen aktualisieren
 	Delete brush	Pinsel löschen
 	Drag the arrow to set the angle, the dots to set the roundness	Ziehe den Pfeil für den Winkel, die Punkte für die Rundung
 	Expand	Ausklappen

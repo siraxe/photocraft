@@ -1890,6 +1890,7 @@
 	Collapse group  ({key}-click: all groups)	Recolher grupo  ({key}-clique: todos os grupos)
 	Create new brush from the current settings	Criar novo pincel a partir das configurações atuais
 	Create new brush from these settings	Criar novo pincel a partir destas configurações
+	Update the current brush with these settings	Atualizar o pincel atual com estas configurações
 	Delete brush	Excluir pincel
 	Drag the arrow to set the angle, the dots to set the roundness	Arraste a seta para definir o ângulo e os pontos para definir o arredondamento
 	Expand	Expandir

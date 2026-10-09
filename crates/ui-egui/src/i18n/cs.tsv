@@ -1938,6 +1938,7 @@
 	Collapse group  ({key}-click: all groups)	Sbalit skupinu  ({key}+kliknutí: všechny skupiny)
 	Create new brush from the current settings	Vytvořit nový štětec z aktuálního nastavení
 	Create new brush from these settings	Vytvořit nový štětec z tohoto nastavení
+	Update the current brush with these settings	Aktualizovat aktuální štětec těmito nastaveními
 	Delete brush	Odstranit štětec
 	Drag the arrow to set the angle, the dots to set the roundness	Tažením šipky nastavíte úhel, tažením bodů kulatost
 	Expand	Rozbalit

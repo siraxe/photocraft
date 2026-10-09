@@ -1918,6 +1918,7 @@
 	Collapse group  ({key}-click: all groups)	Zwiń grupę  (kliknięcie z {key}: wszystkie grupy)
 	Create new brush from the current settings	Utwórz nowy pędzel z bieżących ustawień
 	Create new brush from these settings	Utwórz nowy pędzel z tych ustawień
+	Update the current brush with these settings	Zaktualizuj bieżący pędzel tymi ustawieniami
 	Delete brush	Usuń pędzel
 	Drag the arrow to set the angle, the dots to set the roundness	Przeciągnij strzałkę, aby ustawić kąt, a punkty, aby ustawić zaokrąglenie
 	Expand	Rozwiń
