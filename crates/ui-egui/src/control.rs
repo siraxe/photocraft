@@ -8,7 +8,7 @@
 //! - `engine.commands`: list commands with enablement
 //! - `ui.inspect`: full UI state (tool, panels, views, dialogs, windows, window size); the menu
 //!   tree is `ui.menu.list`
-//! - `ui.set {tool?, panels?, dock?, dockTabs?, dockWidth?, colorPanel?, maskTarget?, vectorMaskTarget?, selectionMode?, zoom?, center?, rotation?, fit?, theme?, brushSection?, brushTab?, brushesView?, brushPicker?, brushPickerName?, brushPickerStroke?, brushPickerTip?, brushSize?}`:
+//! - `ui.set {tool?, panels?, dock?, dockTabs?, dockWidth?, colorPanel?, maskTarget?, vectorMaskTarget?, selectionMode?, zoom?, center?, rotation?, fit?, theme?, brushSection?, brushTab?, brushesView?, brushPicker?, brushPickerName?, brushPickerStroke?, brushPickerTip?, brushPickerScale?, brushSize?}`:
 //!   change UI state; any other field is an error ([`UI_SET_FIELDS`])
 //! - `ui.dialog.open {kind, fields?}` (kinds: newDocument, about, layerStyle {effect?}, colorPicker {target: foreground|background}, command {command}) / `ui.dialog.set {dialog, field, value}` / `ui.dialog.confirm {dialog, wait?}` / `ui.dialog.cancel {dialog}`
 //! - `ui.dialog.apply {dialog}`: commit Preferences changes without closing the dialog
@@ -74,7 +74,7 @@ pub enum Outcome {
 /// field's value is validated before the first one is applied, so a typo, an unknown field, a
 /// bad value or a bad nested key can't reply with success while nothing — or only half of it —
 /// changed (#412).
-pub const UI_SET_FIELDS: [&str; 31] = [
+pub const UI_SET_FIELDS: [&str; 32] = [
     "tool",
     "panels",
     "dock",
@@ -96,6 +96,7 @@ pub const UI_SET_FIELDS: [&str; 31] = [
     "brushPickerName",
     "brushPickerStroke",
     "brushPickerTip",
+    "brushPickerScale",
     "brushSize",
     "gradientBlendMode",
     "gradientClassic",
@@ -417,6 +418,13 @@ fn dispatch(app: &mut PhotocraftApp, ctx: &egui::Context, req: &ControlRequest) 
                         return Err("brushPickerName, brushPickerStroke and brushPickerTip: at least one must stay on".into());
                     }
                 }
+                // The picker footer slider: the preset cards' size scale (1 standard; 0.30 and
+                // below the tips drop their size numbers).
+                let brush_picker_scale = match num_field(p, "brushPickerScale")? {
+                    Some(s) if !(0.15..=2.0).contains(&s) => return Err("brushPickerScale must be between 0.15 and 2".into()),
+                    Some(s) => Some(s as f32),
+                    None => None,
+                };
                 // `Some(None)` is an explicit null, which closes the picker (a missing field
                 // leaves it alone).
                 let brush_picker = match p.get("brushPicker") {
@@ -550,6 +558,9 @@ fn dispatch(app: &mut PhotocraftApp, ctx: &egui::Context, req: &ControlRequest) 
                 }
                 if let Some(v) = brush_picker_tip {
                     app.ui.brush_picker_list.show_tip = v;
+                }
+                if let Some(v) = brush_picker_scale {
+                    app.ui.brush_picker_list.scale = v;
                 }
                 if let Some(at) = brush_picker {
                     app.ui.brush_picker = at;
@@ -894,6 +905,8 @@ pub fn inspect(app: &PhotocraftApp, ctx: &egui::Context) -> Value {
         "layerMenu": app.ui.layer_menu,
         "brushPicker": app.ui.brush_picker.map(|pos| json!({
             "pos": pos,
+            // The picker's content size once its corner grip was dragged (null: the default).
+            "size": app.ui.brush_picker_size,
             "list": {
                 "collapsed": app.ui.brush_picker_list.collapsed,
                 "filter": app.ui.brush_picker_list.filter,
@@ -902,6 +915,8 @@ pub fn inspect(app: &PhotocraftApp, ctx: &egui::Context) -> Value {
                 "showName": app.ui.brush_picker_list.show_name,
                 "showStroke": app.ui.brush_picker_list.show_stroke,
                 "showTip": app.ui.brush_picker_list.show_tip,
+                // The footer slider: the cards' width scale.
+                "scale": app.ui.brush_picker_list.scale,
             },
         })),
         "canvasToolMenu": app.ui.canvas_tool_menu.as_ref().map(|menu| {

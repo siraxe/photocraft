@@ -387,31 +387,90 @@ fn grid_cell(ui: &mut egui::Ui, p: &BrushPreset, current: bool, presets: &[Brush
     preset_interactions(ui, &resp, r, p, presets, true, acts);
 }
 
-/// Padding inside a card, its tip cell's width, and its top row's and name row's heights.
+/// Padding, tip cell width and name row height, at scale 1; the footer slider multiplies them
+/// (heights down to [`CARD_MIN_H_SCALE`]).
 const CARD_PAD: f32 = 4.0;
 const CARD_TIP_W: f32 = 46.0;
-const CARD_TOP_H: f32 = 38.0;
 const CARD_NAME_H: f32 = 20.0;
+/// A full card's height at scale 1: the tip/stroke row takes what the name row leaves. The
+/// footer slider multiplies it down to [`CARD_MIN_H_SCALE`].
+const CARD_MAX_H: f32 = 70.0;
+/// The widest a lone card grows at scale 1; past it the room is shared between columns.
+const CARD_MAX_W: f32 = 300.0;
+/// Tip alone: a grid of small [`CARD_TIP_ONLY_W`] × [`CARD_TIP_ONLY_H`] cells (scale 1).
+const CARD_TIP_ONLY_W: f32 = 60.0;
+const CARD_TIP_ONLY_H: f32 = 70.0;
+/// Tip + name, no stroke: a grid of [`CARD_TIP_NAME_W`] × [`CARD_TIP_NAME_H`] cells (scale 1).
+const CARD_TIP_NAME_W: f32 = 200.0;
+const CARD_TIP_NAME_H: f32 = 70.0;
+/// The footer scale's floor for heights, padding and text (the widths keep shrinking).
+const CARD_MIN_H_SCALE: f32 = 0.50;
+/// At or below this scale the tips drop their size numbers and fill their cell whole.
+const CARD_COMPACT_SCALE: f32 = 0.40;
+
+/// The picker's cards in a list `width` points wide, `indent` past its left edge: how wide each
+/// card is and how many sit in a row. A lone card fills the room up to [`CARD_MAX_W`] × `scale`
+/// (wider lists leave the rest empty); from two columns on, the cards share the room, filling it
+/// fully. `scale` is the picker's footer slider ([`crate::brush_picker::body`]), already floored
+/// so the widths never reach zero.
+fn card_columns(width: f32, indent: f32, scale: f32) -> (f32, usize) {
+    let max_w = CARD_MAX_W * scale;
+    let room = if width.is_finite() { (width - indent).max(0.0) } else { CARD_MAX_W };
+    let cols = ((room / max_w).floor() as usize).clamp(1, 256);
+    let share = (room - GRID_GAP * (cols - 1) as f32) / cols as f32;
+    let card_w = if cols == 1 { room.min(max_w) } else { share };
+    (if card_w.is_finite() { card_w.max(1.0) } else { CARD_MAX_W }, cols)
+}
+
+/// Is the card showing the tip alone (no name, no stroke)? Then it's a small tip cell in a grid.
+fn tip_only(show: (bool, bool, bool)) -> bool {
+    show == (false, false, true)
+}
+
+/// Is the card showing the tip and the name with the stroke off? Then it's a tip-and-name cell.
+fn tip_and_name(show: (bool, bool, bool)) -> bool {
+    show == (true, false, true)
+}
 
 /// One preset in the Brush Preset picker: a 2 × 2 grid whose bottom row (the name) spans both
 /// columns — tip at the top left, stroke preview at the top right. A part that's off loses its
 /// cell (the other takes the room): with only the tip and the name on, the name moves into the
 /// stroke's cell and the bottom row is gone. At least one part is always on. `show` is the three
-/// gear boxes (name, stroke, tip); `indent` shifts the card into its nested folder.
-fn preset_card(ui: &mut egui::Ui, p: &BrushPreset, current: bool, presets: &[BrushPreset], show: (bool, bool, bool), indent: f32, acts: &mut Vec<Action>) {
+/// gear boxes (name, stroke, tip); `width` is the row slot the card fills (a [`card_columns`]
+/// column or a fixed cell, [`CARD_TIP_ONLY_W`]/[`CARD_TIP_NAME_W`]), and `scale` the footer
+/// slider: heights, padding and text floor at [`CARD_MIN_H_SCALE`], and at or below
+/// [`CARD_COMPACT_SCALE`] the tips drop their size numbers and take their cell whole.
+#[allow(clippy::too_many_arguments)]
+fn preset_card(ui: &mut egui::Ui, p: &BrushPreset, current: bool, presets: &[BrushPreset], show: (bool, bool, bool), width: f32, scale: f32, acts: &mut Vec<Action>) {
     let (show_name, show_stroke, show_tip) = show;
+    let tip_only = tip_only(show);
+    let compact = scale <= CARD_COMPACT_SCALE;
     let t = Tokens::get(ui.ctx());
-    let name_in_top = show_name && show_tip && !show_stroke;
-    let top_h = if show_tip || show_stroke || name_in_top { CARD_TOP_H } else { 0.0 };
-    let name_h = if show_name && !name_in_top { CARD_NAME_H } else { 0.0 };
-    let (full, resp) = ui.allocate_exact_size(vec2(ui.available_width(), CARD_PAD * 2.0 + top_h + name_h), Sense::click_and_drag());
+    let name_in_top = tip_and_name(show);
+    // Widths (which arrive scaled) keep narrowing with the slider; heights stop at the floor.
+    let scale_h = scale.max(CARD_MIN_H_SCALE);
+    let pad = CARD_PAD * scale;
+    let pad_y = CARD_PAD * scale_h;
+    let name_h = if show_name && !name_in_top { CARD_NAME_H * scale_h } else { 0.0 };
+    // The tip/stroke row: the tip-only or tip-and-name card's own height less the padding, else
+    // what [`CARD_MAX_H`] leaves past the padding and the name row. A card with no top part at
+    // all (the name alone) has no such row.
+    let top_h = if tip_only {
+        (CARD_TIP_ONLY_H - CARD_PAD * 2.0) * scale_h
+    } else if name_in_top {
+        (CARD_TIP_NAME_H - CARD_PAD * 2.0) * scale_h
+    } else if show_tip || show_stroke {
+        (CARD_MAX_H - CARD_PAD * 2.0 - CARD_NAME_H) * scale_h
+    } else {
+        0.0
+    };
+    let (full, resp) = ui.allocate_exact_size(vec2(width, pad_y * 2.0 + top_h + name_h), Sense::click_and_drag());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, current, &p.name));
     if !ui.is_rect_visible(full) {
         return;
     }
-    // Cards inside nested folders are indented; the whole width stays the drop target.
-    let r = egui::Rect::from_min_max(full.min + vec2(indent.min(full.width() / 2.0), 0.0), full.max);
-    let card = r.shrink2(vec2(4.0, 0.0));
+    // The card is inset a little in its column; the whole column stays the drop target.
+    let card = full.shrink2(vec2((4.0 * scale).min(full.width() * 0.5), 0.0));
     if current {
         ui.painter().rect_filled(card, 3.0, t.accent_soft);
         ui.painter().rect_stroke(card, 3.0, Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
@@ -419,24 +478,29 @@ fn preset_card(ui: &mut egui::Ui, p: &BrushPreset, current: bool, presets: &[Bru
         ui.painter().rect_filled(card, 3.0, t.hover);
     }
     let pb = &p.brush;
-    let inner = card.shrink(CARD_PAD);
+    let inner = card.shrink2(vec2(pad, pad_y));
     let top = egui::Rect::from_min_size(inner.left_top(), vec2(inner.width(), top_h));
     let mut x = top.left();
     if show_tip {
-        // The tip thumbnail with the size under it (like the list row).
-        let tip_w = CARD_TIP_W.min(top.width() * 0.5);
+        // The tip thumbnail with the size under it (like the list row). With the tip alone the
+        // cell takes the whole card, so the thumbnail is centred in it (the tip-only grid).
+        // Compact cards drop the number — it wouldn't fit — and the tip takes the cell whole.
+        let tip_w = if tip_only { top.width() } else { (CARD_TIP_W * scale).min(top.width() * 0.5) };
         let cell = egui::Rect::from_min_size(top.left_top(), vec2(tip_w, top_h));
         let tip = brush_preview::tip_texture(ui.ctx(), &format!("brushes-tip:{}", p.name), &pb.tip, (pb.hardness, pb.angle, pb.roundness), 36, t.text);
-        let side = 28.0 * crate::brush_sections::thumb_scale(pb.size);
-        let tr = egui::Rect::from_center_size(pos2(cell.center().x, cell.center().y - 2.0), vec2(side, side));
+        let side = if compact { (cell.width().min(cell.height()) - 2.0).max(1.0) } else { 28.0 * scale * crate::brush_sections::thumb_scale(pb.size) };
+        let center = if compact { cell.center() } else { pos2(cell.center().x, cell.center().y - 2.0 * scale_h) };
+        let tr = egui::Rect::from_center_size(center, vec2(side, side));
         ui.painter().image(tip.id(), tr, full_uv(), Color32::WHITE);
-        ui.painter().text(
-            pos2(cell.center().x, cell.bottom() - 1.0),
-            egui::Align2::CENTER_BOTTOM,
-            format!("{}", pb.size.round() as i64),
-            egui::FontId::proportional(9.0),
-            t.text_faint,
-        );
+        if !compact {
+            ui.painter().text(
+                pos2(cell.center().x, cell.bottom() - 1.0),
+                egui::Align2::CENTER_BOTTOM,
+                format!("{}", pb.size.round() as i64),
+                egui::FontId::proportional(9.0 * scale_h),
+                t.text_faint,
+            );
+        }
         x = cell.right();
     }
     if show_stroke || name_in_top {
@@ -444,21 +508,24 @@ fn preset_card(ui: &mut egui::Ui, p: &BrushPreset, current: bool, presets: &[Bru
         let cell = egui::Rect::from_min_max(pos2(x, top.top()), top.right_bottom());
         if show_stroke {
             let cw = if cell.width().is_finite() { cell.width().max(1.0) } else { 1.0 };
-            let w = (cw - 16.0).clamp(24.0, 260.0).min(cw).round();
-            let stroke = brush_preview::stroke_texture(ui.ctx(), &format!("brushes-stroke-{w}:{}", p.name), pb, w as u32, 36, t.text);
-            let sr = egui::Rect::from_min_size(pos2(cell.left() + 8.0, cell.center().y - 18.0), vec2(w, 36.0));
+            let w = ((cw - 16.0 * scale).clamp(24.0 * scale, 260.0 * scale)).min(cw).max(1.0).round();
+            let h = (36.0 * scale_h).round().max(1.0) as u32;
+            let stroke = brush_preview::stroke_texture(ui.ctx(), &format!("brushes-stroke-{w}:{}", p.name), pb, w as u32, h, t.text);
+            let sr = egui::Rect::from_min_size(pos2(cell.left() + 8.0 * scale, cell.center().y - 18.0 * scale_h), vec2(w, 36.0 * scale_h));
             ui.painter().image(stroke.id(), sr, full_uv(), Color32::WHITE);
         } else {
-            crate::layer_row_ui::label(ui.painter(), cell.left() + 8.0, cell.center().y, cell.right() - 6.0, &p.name, egui::FontId::proportional(12.0), t.text_dim);
+            crate::layer_row_ui::label(ui.painter(), cell.left() + 8.0 * scale, cell.center().y, cell.right() - 6.0 * scale, &p.name, egui::FontId::proportional(12.0 * scale_h), t.text_dim);
         }
     }
     if name_h > 0.0 {
         // The merged bottom row: the name across the whole card.
         let cell = egui::Rect::from_min_size(pos2(inner.left(), top.bottom()), vec2(inner.width(), name_h));
-        crate::layer_row_ui::label(ui.painter(), cell.left() + 6.0, cell.center().y, cell.right() - 6.0, &p.name, egui::FontId::proportional(12.0), t.text_dim);
+        crate::layer_row_ui::label(ui.painter(), cell.left() + 6.0 * scale, cell.center().y, cell.right() - 6.0 * scale, &p.name, egui::FontId::proportional(12.0 * scale_h), t.text_dim);
     }
     let resp = resp.on_hover_text(&p.name);
-    preset_interactions(ui, &resp, r, p, presets, false, acts);
+    // A tip-only card's grid drops between columns, like the Brushes tab's: the rest drop between
+    // rows (there is a row under the tip there).
+    preset_interactions(ui, &resp, card, p, presets, tip_only, acts);
 }
 
 /// Indent of one nested folder level.
@@ -553,6 +620,11 @@ struct Draw<'a> {
     layout: ListLayout,
     /// The picker cards' parts — name, stroke, tip — from the gear's boxes.
     show: (bool, bool, bool),
+    /// The picker cards' size scale (its footer slider, 1 = standard): multiplies [`CARD_MAX_W`]
+    /// and [`CARD_MAX_H`], or [`CARD_TIP_ONLY_W`]/[`CARD_TIP_ONLY_H`] for tip-only cards and
+    /// [`CARD_TIP_NAME_W`]/[`CARD_TIP_NAME_H`] for tip-and-name ones, and at or below
+    /// [`CARD_COMPACT_SCALE`] the tips drop their size numbers.
+    scale: f32,
 }
 
 /// Draw `nodes` (a group's or folder's content) at nesting `depth`: runs of presets as rows or a
@@ -566,10 +638,41 @@ fn draw_nodes(ui: &mut egui::Ui, d: &Draw, nodes: &[Node], depth: usize, acts: &
             return;
         }
         if d.layout.cards {
-            // The picker's cards: one brush per row, each a 2 × 2 tip/stroke/name grid.
-            for p in run.iter() {
-                preset_card(ui, p, d.current.is_some_and(|n| p.name.eq_ignore_ascii_case(n)), d.presets, d.show, indent, acts);
-            }
+            // The picker's cards: [`card_columns`] cards sharing each row, or a centred grid
+            // of fixed cells ([`CARD_TIP_ONLY_W`], [`CARD_TIP_NAME_W`]) for the two
+            // stripped-down modes. The scale floors at the slider's own bottom end.
+            let scale = d.scale.max(*crate::brush_picker::SCALE_RANGE.start());
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = vec2(GRID_GAP, GRID_GAP);
+                let fixed = if tip_only(d.show) {
+                    Some(CARD_TIP_ONLY_W * scale)
+                } else if tip_and_name(d.show) {
+                    Some(CARD_TIP_NAME_W * scale)
+                } else {
+                    None
+                };
+                if let Some(cell) = fixed {
+                    let (left, cols) = grid_columns(ui.available_width(), cell, indent);
+                    for row in run.chunks(cols) {
+                        ui.horizontal(|ui| {
+                            ui.add_space(left);
+                            for p in row {
+                                preset_card(ui, p, d.current.is_some_and(|n| p.name.eq_ignore_ascii_case(n)), d.presets, d.show, cell, scale, acts);
+                            }
+                        });
+                    }
+                } else {
+                    let (card_w, cols) = card_columns(ui.available_width(), indent, scale);
+                    for row in run.chunks(cols) {
+                        ui.horizontal(|ui| {
+                            ui.add_space(indent);
+                            for p in row {
+                                preset_card(ui, p, d.current.is_some_and(|n| p.name.eq_ignore_ascii_case(n)), d.presets, d.show, card_w, scale, acts);
+                            }
+                        });
+                    }
+                }
+            });
         } else if d.grid {
             // Rows of whole columns, each with the same margin: a wrapped row indented only
             // its first line and left the spare width on the right.
@@ -671,7 +774,7 @@ pub fn preset_list(ui: &mut egui::Ui, presets: &[BrushPreset], current: Option<&
             if !open {
                 continue;
             }
-            let d = Draw { label: &label, key: &key, presets, current, collapsed, filtering: !filter.is_empty(), grid, layout, show };
+            let d = Draw { label: &label, key: &key, presets, current, collapsed, filtering: !filter.is_empty(), grid, layout, show, scale: st.scale };
             draw_nodes(ui, &d, &folder_tree(&items), 0, &mut acts);
             ui.add_space(2.0);
         }

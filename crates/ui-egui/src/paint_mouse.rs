@@ -150,17 +150,33 @@ pub fn show_picker(app: &mut PhotocraftApp, ctx: &egui::Context) {
     // end a rename in its rename bar.
     let key_close = app.ui.brush_picker_list.renaming.is_none() && ctx.input(|i| i.key_pressed(egui::Key::Escape) || i.key_pressed(egui::Key::Enter));
     let screen = ctx.content_rect();
-    // Keep the whole picker on screen: its last size, or about 320 × 480 points before it shows.
+    // The picker's content size: the one its grip was dragged to, or the one it last closed with
+    // (kept in egui's own memory, which outlives the app's), or the default. The frame's chrome
+    // sits around it, and together they keep the whole picker on screen.
     let id = egui::Id::new("canvas-brush-picker");
-    let size = ctx.memory(|m| m.area_rect(id)).map_or(egui::vec2(324.0, 480.0), |r| r.size());
+    let size_id = id.with("content-size");
+    let content = app
+        .ui
+        .brush_picker_size
+        .or_else(|| ctx.data_mut(|d| d.get_persisted::<[f32; 2]>(size_id)))
+        .map_or_else(|| egui::vec2(crate::brush_picker::DEFAULT_SIZE[0], crate::brush_picker::DEFAULT_SIZE[1]), |s| crate::brush_picker::clamp_size(s, screen.size()));
+    // Remember it for the picker's next open, and — egui's memory being saved — the next run.
+    ctx.data_mut(|d| d.insert_persisted(size_id, [content.x, content.y]));
+    let style = ctx.global_style();
+    let size = content + style.spacing.menu_margin.sum() + egui::Vec2::splat(2.0 * style.visuals.window_stroke().width);
     let pos = egui::pos2(x.min(screen.right() - size.x).max(screen.left()), y.min(screen.bottom() - size.y).max(screen.top()));
     let area = egui::Area::new(id).order(egui::Order::Foreground).fixed_pos(pos).show(ctx, |ui| {
         let before = app.session.tools.brush.clone();
         let mut b = before.clone();
         let list = &mut app.ui.brush_picker_list;
-        let picks = egui::Frame::popup(ui.style())
-            .show(ui, |ui| crate::brush_picker::body(ui, &mut b, &app.session.tools.presets, app.session.tools.current_preset.as_deref(), list))
-            .inner;
+        let frame = egui::Frame::popup(ui.style()).show(ui, |ui| {
+            crate::brush_picker::body(ui, &mut b, &app.session.tools.presets, app.session.tools.current_preset.as_deref(), list, content)
+        });
+        let picks = frame.inner;
+        // The corner grip resizes the picker, and the size is remembered across opens.
+        if let Some(new) = crate::brush_picker::resize_grip(ui, frame.response.rect, content) {
+            app.ui.brush_picker_size = Some([new.x, new.y]);
+        }
         crate::brush_panel::commit_gesture(app, ui.ctx(), &before, &b);
         let closes = picks.iter().any(crate::brush_picker::Pick::closes);
         crate::brush_picker::apply(app, ui.ctx(), picks);

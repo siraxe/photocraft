@@ -90,7 +90,9 @@ fn rows_are_centred(h: &Harness<'_, PhotocraftApp>, indent: f32, groups: usize) 
 
 /// The picker's cards: one full-width 2 × 2 card per preset (tip and stroke on top, the name
 /// across the bottom), and a hidden part shrinks the card — with only the tip and the name on,
-/// the name takes the stroke's cell and the card is one row tall.
+/// the name takes the stroke's cell and the card takes its own height ([`CARD_TIP_NAME_H`]) and
+/// width ([`CARD_TIP_NAME_W`]); with only the tip on, the card takes the tip-only cell's own
+/// height.
 #[test]
 fn brush_picker_cards_follow_the_part_boxes() {
     let mut h = Harness::builder().with_size(vec2(1440.0, 900.0)).with_max_steps(64).build_eframe(|cc| {
@@ -108,20 +110,23 @@ fn brush_picker_cards_follow_the_part_boxes() {
             .map(|n| n.rect())
             .collect()
     };
-    let two_rows = CARD_PAD * 2.0 + CARD_TOP_H + CARD_NAME_H;
-    let one_row = CARD_PAD * 2.0 + CARD_TOP_H;
+    let full = CARD_MAX_H;
+    let one_row = CARD_MAX_H - CARD_NAME_H;
     let all_on = cards(&h);
     assert!(all_on.len() >= 2, "{} cards", all_on.len());
-    assert!(all_on.iter().all(|r| (r.height() - two_rows).abs() < 0.5 && r.width() > 250.0), "{all_on:?}");
+    assert!(all_on.iter().all(|r| (r.height() - full).abs() < 0.5 && r.width() > 250.0), "{all_on:?}");
     h.state_mut().ui.brush_picker_list.show_stroke = false;
     h.run_steps(2);
-    assert!(cards(&h).iter().all(|r| (r.height() - one_row).abs() < 0.5), "tip + name: one row, the name in the stroke's cell");
+    assert!(
+        cards(&h).iter().all(|r| (r.height() - CARD_TIP_NAME_H).abs() < 0.5 && (r.width() - CARD_TIP_NAME_W).abs() < 0.5),
+        "tip + name: the name in the stroke's cell, its own cell size"
+    );
     h.state_mut().ui.brush_picker_list.show_name = false;
     h.run_steps(2);
-    assert!(cards(&h).iter().all(|r| (r.height() - one_row).abs() < 0.5), "tip + stroke: one row");
+    assert!(cards(&h).iter().all(|r| (r.height() - CARD_TIP_ONLY_H).abs() < 0.5), "tip only: its own cell");
     h.state_mut().ui.brush_picker_list.show_stroke = true;
     h.run_steps(2);
-    assert!(cards(&h).iter().all(|r| (r.height() - one_row).abs() < 0.5), "tip only: one row");
+    assert!(cards(&h).iter().all(|r| (r.height() - one_row).abs() < 0.5), "tip + stroke: one row");
 }
 
 #[test]
