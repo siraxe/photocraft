@@ -66,9 +66,9 @@ pub mod file_open;
 pub mod file_ui;
 pub mod fill_ui;
 pub mod filter_dialog;
-mod font_preview;
 #[cfg(not(target_arch = "wasm32"))]
 mod filter_preview_worker;
+mod font_preview;
 pub mod gallery_ui;
 pub mod gpu_canvas;
 pub mod gpu_status;
