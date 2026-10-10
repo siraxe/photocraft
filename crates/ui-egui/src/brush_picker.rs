@@ -46,6 +46,9 @@ const FOOTER_H: f32 = SLIDER_H + FOOTER_GAP;
 /// Room the footer leaves on its right for the resize grip ([`resize_grip`] is 16 wide): the
 /// scale slider runs up to the grip's left edge, the two corner controls side by side.
 const GRIP_ROOM: f32 = 20.0;
+/// The block the Size and Hardness controls share, flush with the picker's left edge and at most
+/// this wide: a picker dragged wider keeps the controls their size, the space past them empty.
+pub(crate) const HEAD_MAX_W: f32 = 350.0;
 /// The footer scale slider's range: what the cards' size scale runs between, and what a
 /// remembered scale is clamped to (under the bottom the cards' padding and rows stop making
 /// sense).
@@ -191,10 +194,12 @@ pub(crate) fn named(resp: egui::Response, label: &str) -> egui::Response {
 
 /// The picker's contents: Size, Hardness (round tips only: a sampled tip has none), a search
 /// field with the Brush Settings, New Preset and gear buttons, the preset list, and the footer
-/// slider that scales the cards ([`scale_slider`]). `current` is
-/// the selected preset's name (by identity, so edits don't deselect). `size` is the content size
-/// the user dragged the picker to ([`DEFAULT_SIZE`] before that): the list fills it, so closing
-/// every group doesn't shrink the picker and reopening one has the room to show it.
+/// slider that scales the cards ([`scale_slider`]). Size and Hardness sit in a block flush with
+/// the left edge, at most [`HEAD_MAX_W`] wide, so a picker dragged wider doesn't stretch them.
+/// `current` is the selected preset's name (by identity, so edits don't deselect). `size` is the
+/// content size the user dragged the picker to ([`DEFAULT_SIZE`] before that): the list fills
+/// it, so closing every group doesn't shrink the picker and reopening one has the room to show
+/// it.
 pub fn body(
     ui: &mut egui::Ui,
     b: &mut BrushSettings,
@@ -210,26 +215,36 @@ pub fn body(
     ui.set_width(size.x);
     ui.set_min_height(size.y);
     let top = ui.cursor().min.y;
-    // Size: value field plus a logarithmic slider (small sizes get most of the travel).
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(tl!("Size")).color(t.text_dim));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let mut size = b.size;
-            if widgets::value_field(ui, &mut size, 1.0..=MAX_BRUSH_SIZE, "px", 72.0).changed() {
-                b.size = size.round().clamp(1.0, MAX_BRUSH_SIZE);
-            }
+    // The Size and Hardness controls live in one block flush with the left edge, at most
+    // [`HEAD_MAX_W`] wide: a picker dragged wider leaves the space past the block empty instead of
+    // stretching the rows across it.
+    ui.scope(|ui| {
+        ui.set_max_width(ui.available_width().min(HEAD_MAX_W));
+        // Size: value field plus a logarithmic slider (small sizes get most of the travel).
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(tl!("Size")).color(t.text_dim));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let mut size = b.size;
+                if widgets::value_field(ui, &mut size, 1.0..=MAX_BRUSH_SIZE, "px", 72.0).changed() {
+                    b.size = size.round().clamp(1.0, MAX_BRUSH_SIZE);
+                }
+            });
         });
-    });
-    let mut lv = b.size.max(1.0).ln();
-    if widgets::slider(ui, &mut lv, 0.0..=MAX_BRUSH_SIZE.ln(), None).changed() {
-        b.size = lv.exp().round().clamp(1.0, MAX_BRUSH_SIZE);
-    }
-    if b.tip == TipShape::Round {
-        let mut hard = b.hardness * 100.0;
-        if widgets::slider_row(ui, "Hardness", &mut hard, 0.0..=100.0, "%", None).changed() {
-            b.hardness = (hard / 100.0).clamp(0.0, 1.0);
+        let mut lv = b.size.max(1.0).ln();
+        let size_slider = widgets::slider(ui, &mut lv, 0.0..=MAX_BRUSH_SIZE.ln(), None);
+        if size_slider.changed() {
+            b.size = lv.exp().round().clamp(1.0, MAX_BRUSH_SIZE);
         }
-    }
+        dismiss_popup(&size_slider);
+        if b.tip == TipShape::Round {
+            let mut hard = b.hardness * 100.0;
+            let hardness = widgets::slider_row(ui, "Hardness", &mut hard, 0.0..=100.0, "%", None);
+            if hardness.changed() {
+                b.hardness = (hard / 100.0).clamp(0.0, 1.0);
+            }
+            dismiss_popup(&hardness);
+        }
+    });
     ui.add_space(6.0);
     widgets::hairline(ui);
     ui.add_space(6.0);
@@ -274,10 +289,21 @@ pub fn body(
 fn scale_slider(ui: &mut egui::Ui, st: &mut BrushesPanelState) {
     let w = (ui.available_width() - GRIP_ROOM).max(60.0);
     ui.allocate_ui_with_layout(vec2(w, SLIDER_H), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-        if widgets::slider(ui, &mut st.scale, SCALE_RANGE, None).changed() {
+        let resp = widgets::slider(ui, &mut st.scale, SCALE_RANGE, None);
+        if resp.changed() {
             st.scale = (st.scale * 100.0).round() / 100.0;
         }
+        dismiss_popup(&resp);
     });
+}
+
+/// Closes any open popup (the gear menu) as soon as `resp` is grabbed: a slider or grip drag never
+/// counts as a click, so the menu's [`egui::PopupCloseBehavior::CloseOnClickOutside`] alone leaves
+/// it up — and the picker's own interaction pulls its layer in front, sinking the menu behind it.
+fn dismiss_popup(resp: &egui::Response) {
+    if resp.is_pointer_button_down_on() {
+        egui::Popup::close_all(&resp.ctx);
+    }
 }
 
 /// A remembered picker size, clamped for `screen` (a corrupt or wildly stale value falls back to
@@ -300,6 +326,7 @@ pub fn resize_grip(ui: &mut egui::Ui, frame: egui::Rect, content: egui::Vec2) ->
     let t = Tokens::get(ui.ctx());
     let grip = egui::Rect::from_min_size(frame.right_bottom() - vec2(16.0, 16.0), vec2(16.0, 16.0));
     let resp = ui.interact(grip, ui.id().with("brush-picker-resize"), egui::Sense::drag());
+    dismiss_popup(&resp);
     let corner = grip.right_bottom() - vec2(3.0, 3.0);
     for i in 0..3 {
         let o = i as f32 * 4.0;
@@ -325,7 +352,13 @@ pub fn resize_grip(ui: &mut egui::Ui, frame: egui::Rect, content: egui::Vec2) ->
 /// view, and Import Brushes.
 fn gear_menu(ui: &mut egui::Ui, current: Option<&str>, presets: &[BrushPreset], st: &mut BrushesPanelState, picks: &mut Vec<Pick>) {
     let gear = named(icons::button(ui, "settings", 24.0, false, tl!("Brush Preset Options")), "Brush Preset Options");
-    egui::Popup::menu(&gear).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+    // The menu hangs 30 pt right of the gear, off the button's own edge; the align fallbacks still
+    // keep it on screen near the window's edge.
+    let anchor = match egui::PopupAnchor::from(&gear) {
+        egui::PopupAnchor::ParentRect(rect) => egui::PopupAnchor::ParentRect(rect.translate(vec2(30.0, 0.0))),
+        other => other,
+    };
+    egui::Popup::menu(&gear).anchor(anchor).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
         if ui.button(tl!("New Brush Preset…")).clicked() {
             picks.push(Pick::NewPreset);
             ui.close();
