@@ -74,7 +74,7 @@ pub struct Renaming {
 }
 
 /// Brushes panel view state (serde, so the control channel can read and drive it).
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct BrushesPanelState {
     /// Collapsed groups and folders: a group's label, or for a nested folder the group's label and
@@ -84,6 +84,27 @@ pub struct BrushesPanelState {
     pub filter: String,
     pub view: BrushesView,
     pub renaming: Option<Renaming>,
+    /// The Brush Preset picker's cards: show the preset's name. At least one of the three parts
+    /// is always on, and the picker's cards never go empty (see [`crate::brush_picker`]).
+    pub show_name: bool,
+    /// The Brush Preset picker's cards: show the stroke preview.
+    pub show_stroke: bool,
+    /// The Brush Preset picker's cards: show the tip thumbnail.
+    pub show_tip: bool,
+}
+
+impl Default for BrushesPanelState {
+    fn default() -> Self {
+        Self {
+            collapsed: Vec::new(),
+            filter: String::new(),
+            view: BrushesView::default(),
+            renaming: None,
+            show_name: true,
+            show_stroke: true,
+            show_tip: true,
+        }
+    }
 }
 
 /// The enable flag behind section `i` (None for Brush Tip Shape and Smoothing).

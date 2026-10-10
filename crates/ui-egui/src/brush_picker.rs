@@ -3,11 +3,14 @@
 //! field, the gear menu and the preset library in its groups); the full editor is the Brush
 //! Settings panel (F5), which the picker and the options bar open with one click (#258).
 //!
-//! The preset list is the Brushes panel's ([`brushes_tab::preset_list`]): a click picks a preset
-//! and keeps the picker open, a double-click picks it and closes the picker (#1031); drag to
-//! reorder, right-click to rename or delete. Its view state (search, collapsed groups, list or
-//! grid, a rename in progress) is `UiState::brush_picker_list`, so the control channel can read
-//! and set it.
+//! The preset list is the Brushes panel's ([`brushes_tab::preset_list`]), always as cards: a
+//! click picks a preset and keeps the picker open, a double-click picks it and closes the picker
+//! (#1031); drag to reorder, right-click to rename or delete. Each card is a 2 × 2 grid — tip at
+//! the top left, stroke preview at the top right and the name in the merged bottom row (or in the
+//! stroke's cell when only the tip and the name show) — and the gear's three boxes ([`body`]'s
+//! Brush Name/Brush Stroke/Brush Tip) hide its parts, at least one always on. Its view state
+//! (search, collapsed groups, the card's parts, a rename in progress) is
+//! `UiState::brush_picker_list`, so the control channel can read and set it.
 //!
 //! The picker edits a copy of the brush; the caller sends the size and hardness edits through
 //! `tools.setBrush` ([`crate::brush_panel::commit_gesture`]) and applies the returned [`Pick`]s
@@ -18,15 +21,16 @@ use photocraft_engine::BrushSettings;
 use photocraft_engine::paint::{BrushPreset, MAX_BRUSH_SIZE, TipShape};
 use serde_json::json;
 
-use crate::brush_panel::{BrushesPanelState, BrushesView, Renaming, new_preset_name, run_or_status};
+use crate::brush_panel::{BrushesPanelState, Renaming, new_preset_name, run_or_status};
 use crate::brushes_tab::{self, Action, ListLayout};
 use crate::theme::Tokens;
 use crate::{PhotocraftApp, icons, widgets};
 
 /// Width of the picker's contents.
 pub const WIDTH: f32 = 300.0;
-/// The picker's preset list: denser than the Brushes tab's.
-pub(crate) const LIST: ListLayout = ListLayout { id: "brush-picker-presets", max_height: 300.0, cell: 44.0, indent: 4.0 };
+/// The picker's preset list: denser than the Brushes tab's, and always the cards (its tip, stroke
+/// and name cells, set by [`BrushesPanelState::show_name`] and friends).
+pub(crate) const LIST: ListLayout = ListLayout { id: "brush-picker-presets", max_height: 300.0, cell: 44.0, indent: 4.0, cards: true };
 
 /// What the picker asks for beyond the size and hardness edits.
 #[derive(Clone, Debug, PartialEq)]
@@ -66,9 +70,9 @@ pub fn close(ui: &mut crate::state::UiState) {
     ui.brush_picker_list.renaming = None;
 }
 
-/// The picker's list view before it is changed: tip thumbnails, like Photoshop's picker.
+/// The state the picker's preset list starts from: every card part on (tip, stroke and name).
 pub fn list_state() -> BrushesPanelState {
-    BrushesPanelState { view: BrushesView::Grid, ..Default::default() }
+    BrushesPanelState::default()
 }
 
 /// Run what the picker asked for.
@@ -196,10 +200,15 @@ fn gear_menu(ui: &mut egui::Ui, current: Option<&str>, presets: &[BrushPreset], 
             }
         });
         ui.separator();
-        for (view, label) in [(BrushesView::List, tl!("List view")), (BrushesView::Grid, tl!("Grid view"))] {
-            if ui.selectable_label(st.view == view, label).clicked() {
-                st.view = view;
-                ui.close();
+        // What a preset's card shows: a checkbox per part. At least one stays on — clicking the
+        // last checked box does nothing, since an empty card would show no brush at all.
+        let on = [st.show_name, st.show_stroke, st.show_tip].into_iter().filter(|b| *b).count();
+        for (flag, label) in
+            [(&mut st.show_name, tl!("Brush Name")), (&mut st.show_stroke, tl!("Brush Stroke")), (&mut st.show_tip, tl!("Brush Tip"))]
+        {
+            let was = *flag;
+            if ui.checkbox(flag, label).changed() && was && on == 1 {
+                *flag = true;
             }
         }
         ui.separator();

@@ -230,7 +230,8 @@ pub struct UiSetParams {
     /// ({background: bool} picks which swatch the Color panel edits), maskTarget,
     /// vectorMaskTarget, selectionMode, zoom, center, rotation (view angle in degrees), fit, theme (pro, proMedium, studio,
     /// studioLight, classic), brushSection, brushTab, brushesView, brushPicker ([x, y] opens the
-    /// Brush Preset picker there, null closes it), brushPickerView, brushSize, gradientBlendMode
+    /// Brush Preset picker there, null closes it), brushPickerName, brushPickerStroke,
+    /// brushPickerTip (the picker card's parts, at least one on), brushSize, gradientBlendMode
     /// (a blend mode name, for the Gradient tool), gradientClassic (bool), eyedropperSampleSize
     /// ("point" or 1, 3, 5, 11, 31, 51, 101), eyedropperSample (current, currentAndBelow, all,
     /// allNoAdjustments, currentAndBelowNoAdjustments), eyedropperRing (bool), cropOverlay (thirds,

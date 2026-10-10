@@ -81,10 +81,14 @@ pub struct ListLayout {
     /// Width of a grid cell (its height is 6 points more) and the grid's left indent.
     pub cell: f32,
     pub indent: f32,
+    /// The Brush Preset picker's cards: a tip cell and a stroke cell on top and the name across
+    /// the bottom (or, with only the tip and the name on, in the stroke's cell). Replaces the
+    /// list/grid choice in the picker.
+    pub cards: bool,
 }
 
 /// The Brushes tab's list.
-pub const PANEL_LIST: ListLayout = ListLayout { id: "brush-presets", max_height: 400.0, cell: 52.0, indent: 20.0 };
+pub const PANEL_LIST: ListLayout = ListLayout { id: "brush-presets", max_height: 400.0, cell: 52.0, indent: 20.0, cards: false };
 
 /// The group key (`BrushPreset::group`) behind a panel label: ungrouped presets show as
 /// [`UNGROUPED`].
@@ -383,6 +387,80 @@ fn grid_cell(ui: &mut egui::Ui, p: &BrushPreset, current: bool, presets: &[Brush
     preset_interactions(ui, &resp, r, p, presets, true, acts);
 }
 
+/// Padding inside a card, its tip cell's width, and its top row's and name row's heights.
+const CARD_PAD: f32 = 4.0;
+const CARD_TIP_W: f32 = 46.0;
+const CARD_TOP_H: f32 = 38.0;
+const CARD_NAME_H: f32 = 20.0;
+
+/// One preset in the Brush Preset picker: a 2 × 2 grid whose bottom row (the name) spans both
+/// columns — tip at the top left, stroke preview at the top right. A part that's off loses its
+/// cell (the other takes the room): with only the tip and the name on, the name moves into the
+/// stroke's cell and the bottom row is gone. At least one part is always on. `show` is the three
+/// gear boxes (name, stroke, tip); `indent` shifts the card into its nested folder.
+fn preset_card(ui: &mut egui::Ui, p: &BrushPreset, current: bool, presets: &[BrushPreset], show: (bool, bool, bool), indent: f32, acts: &mut Vec<Action>) {
+    let (show_name, show_stroke, show_tip) = show;
+    let t = Tokens::get(ui.ctx());
+    let name_in_top = show_name && show_tip && !show_stroke;
+    let top_h = if show_tip || show_stroke || name_in_top { CARD_TOP_H } else { 0.0 };
+    let name_h = if show_name && !name_in_top { CARD_NAME_H } else { 0.0 };
+    let (full, resp) = ui.allocate_exact_size(vec2(ui.available_width(), CARD_PAD * 2.0 + top_h + name_h), Sense::click_and_drag());
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, current, &p.name));
+    if !ui.is_rect_visible(full) {
+        return;
+    }
+    // Cards inside nested folders are indented; the whole width stays the drop target.
+    let r = egui::Rect::from_min_max(full.min + vec2(indent.min(full.width() / 2.0), 0.0), full.max);
+    let card = r.shrink2(vec2(4.0, 0.0));
+    if current {
+        ui.painter().rect_filled(card, 3.0, t.accent_soft);
+        ui.painter().rect_stroke(card, 3.0, Stroke::new(1.0, t.accent), egui::StrokeKind::Inside);
+    } else if resp.hovered() {
+        ui.painter().rect_filled(card, 3.0, t.hover);
+    }
+    let pb = &p.brush;
+    let inner = card.shrink(CARD_PAD);
+    let top = egui::Rect::from_min_size(inner.left_top(), vec2(inner.width(), top_h));
+    let mut x = top.left();
+    if show_tip {
+        // The tip thumbnail with the size under it (like the list row).
+        let tip_w = CARD_TIP_W.min(top.width() * 0.5);
+        let cell = egui::Rect::from_min_size(top.left_top(), vec2(tip_w, top_h));
+        let tip = brush_preview::tip_texture(ui.ctx(), &format!("brushes-tip:{}", p.name), &pb.tip, (pb.hardness, pb.angle, pb.roundness), 36, t.text);
+        let side = 28.0 * crate::brush_sections::thumb_scale(pb.size);
+        let tr = egui::Rect::from_center_size(pos2(cell.center().x, cell.center().y - 2.0), vec2(side, side));
+        ui.painter().image(tip.id(), tr, full_uv(), Color32::WHITE);
+        ui.painter().text(
+            pos2(cell.center().x, cell.bottom() - 1.0),
+            egui::Align2::CENTER_BOTTOM,
+            format!("{}", pb.size.round() as i64),
+            egui::FontId::proportional(9.0),
+            t.text_faint,
+        );
+        x = cell.right();
+    }
+    if show_stroke || name_in_top {
+        // The stroke preview, or the name where it goes when the stroke is hidden.
+        let cell = egui::Rect::from_min_max(pos2(x, top.top()), top.right_bottom());
+        if show_stroke {
+            let cw = if cell.width().is_finite() { cell.width().max(1.0) } else { 1.0 };
+            let w = (cw - 16.0).clamp(24.0, 260.0).min(cw).round();
+            let stroke = brush_preview::stroke_texture(ui.ctx(), &format!("brushes-stroke-{w}:{}", p.name), pb, w as u32, 36, t.text);
+            let sr = egui::Rect::from_min_size(pos2(cell.left() + 8.0, cell.center().y - 18.0), vec2(w, 36.0));
+            ui.painter().image(stroke.id(), sr, full_uv(), Color32::WHITE);
+        } else {
+            crate::layer_row_ui::label(ui.painter(), cell.left() + 8.0, cell.center().y, cell.right() - 6.0, &p.name, egui::FontId::proportional(12.0), t.text_dim);
+        }
+    }
+    if name_h > 0.0 {
+        // The merged bottom row: the name across the whole card.
+        let cell = egui::Rect::from_min_size(pos2(inner.left(), top.bottom()), vec2(inner.width(), name_h));
+        crate::layer_row_ui::label(ui.painter(), cell.left() + 6.0, cell.center().y, cell.right() - 6.0, &p.name, egui::FontId::proportional(12.0), t.text_dim);
+    }
+    let resp = resp.on_hover_text(&p.name);
+    preset_interactions(ui, &resp, r, p, presets, false, acts);
+}
+
 /// Indent of one nested folder level.
 const FOLDER_INDENT: f32 = 16.0;
 
@@ -473,6 +551,8 @@ struct Draw<'a> {
     filtering: bool,
     grid: bool,
     layout: ListLayout,
+    /// The picker cards' parts — name, stroke, tip — from the gear's boxes.
+    show: (bool, bool, bool),
 }
 
 /// Draw `nodes` (a group's or folder's content) at nesting `depth`: runs of presets as rows or a
@@ -485,7 +565,12 @@ fn draw_nodes(ui: &mut egui::Ui, d: &Draw, nodes: &[Node], depth: usize, acts: &
         if run.is_empty() {
             return;
         }
-        if d.grid {
+        if d.layout.cards {
+            // The picker's cards: one brush per row, each a 2 × 2 tip/stroke/name grid.
+            for p in run.iter() {
+                preset_card(ui, p, d.current.is_some_and(|n| p.name.eq_ignore_ascii_case(n)), d.presets, d.show, indent, acts);
+            }
+        } else if d.grid {
             // Rows of whole columns, each with the same margin: a wrapped row indented only
             // its first line and left the spare width on the right.
             let (left, cols) = grid_columns(ui.available_width(), d.layout.cell, d.layout.indent + indent);
@@ -560,15 +645,17 @@ fn rename_bar(ui: &mut egui::Ui, st: &mut BrushesPanelState, acts: &mut Vec<Acti
     ui.add_space(4.0);
 }
 
-/// The presets in their groups, filtered by `st.filter`, as rows or tip cells (`st.view`), with
-/// the rename bar above them while a rename is open. `current` is the selected preset's name:
-/// selection is by identity, so it survives edits and tells look-alike duplicates apart. Group
-/// toggles and renames update `st`; the returned actions are commands for [`apply`].
+/// The presets in their groups, filtered by `st.filter`, as rows or tip cells (`st.view`) or as
+/// the picker's cards (`layout.cards`, drawn from the `st.show_*` parts), with the rename bar
+/// above them while a rename is open. `current` is the selected preset's name: selection is by
+/// identity, so it survives edits and tells look-alike duplicates apart. Group toggles and renames
+/// update `st`; the returned actions are commands for [`apply`].
 pub fn preset_list(ui: &mut egui::Ui, presets: &[BrushPreset], current: Option<&str>, st: &mut BrushesPanelState, layout: ListLayout) -> Vec<Action> {
     let mut acts = Vec::new();
     rename_bar(ui, st, &mut acts);
     let filter = st.filter.trim().to_lowercase();
     let grid = st.view == BrushesView::Grid;
+    let show = (st.show_name, st.show_stroke, st.show_tip);
     let collapsed = &st.collapsed;
     egui::ScrollArea::vertical().id_salt(layout.id).max_height(layout.max_height).auto_shrink([false, true]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 1.0;
@@ -584,7 +671,7 @@ pub fn preset_list(ui: &mut egui::Ui, presets: &[BrushPreset], current: Option<&
             if !open {
                 continue;
             }
-            let d = Draw { label: &label, key: &key, presets, current, collapsed, filtering: !filter.is_empty(), grid, layout };
+            let d = Draw { label: &label, key: &key, presets, current, collapsed, filtering: !filter.is_empty(), grid, layout, show };
             draw_nodes(ui, &d, &folder_tree(&items), 0, &mut acts);
             ui.add_space(2.0);
         }

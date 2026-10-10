@@ -423,12 +423,18 @@ mod tests {
         assert!(h.state().session.tools.presets.iter().any(|p| p.name == "Inky"), "renamed");
         assert!(h.state().ui.brush_picker_list.renaming.is_none());
         assert!(h.state().ui.brush_picker.is_some(), "Enter ended the rename, not the picker");
-        // The gear's view items switch the list between tips and names.
+        // The gear's boxes pick the card parts; the last one on can't be turned off.
         h.get_by_label("Brush Preset Options").click();
         h.run_steps(2);
-        h.get_by_label("List view").click();
+        h.get_by_label("Brush Tip").click();
         h.run_steps(2);
-        assert_eq!(h.state().ui.brush_picker_list.view, crate::brush_panel::BrushesView::List);
+        assert!(!h.state().ui.brush_picker_list.show_tip);
+        h.get_by_label("Brush Stroke").click();
+        h.run_steps(2);
+        h.get_by_label("Brush Name").click();
+        h.run_steps(2);
+        assert!(h.state().ui.brush_picker_list.show_name, "the last part on stays on");
+        assert!(!h.state().ui.brush_picker_list.show_stroke && !h.state().ui.brush_picker_list.show_tip);
         assert!(h.state().ui.brush_picker.is_some());
         // A rename left open goes with the picker.
         h.state_mut().ui.brush_picker_list.renaming =

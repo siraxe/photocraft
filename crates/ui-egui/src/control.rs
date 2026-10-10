@@ -8,7 +8,7 @@
 //! - `engine.commands`: list commands with enablement
 //! - `ui.inspect`: full UI state (tool, panels, views, dialogs, windows, window size); the menu
 //!   tree is `ui.menu.list`
-//! - `ui.set {tool?, panels?, dock?, dockTabs?, dockWidth?, colorPanel?, maskTarget?, vectorMaskTarget?, selectionMode?, zoom?, center?, rotation?, fit?, theme?, brushSection?, brushTab?, brushesView?, brushPicker?, brushPickerView?, brushSize?}`:
+//! - `ui.set {tool?, panels?, dock?, dockTabs?, dockWidth?, colorPanel?, maskTarget?, vectorMaskTarget?, selectionMode?, zoom?, center?, rotation?, fit?, theme?, brushSection?, brushTab?, brushesView?, brushPicker?, brushPickerName?, brushPickerStroke?, brushPickerTip?, brushSize?}`:
 //!   change UI state; any other field is an error ([`UI_SET_FIELDS`])
 //! - `ui.dialog.open {kind, fields?}` (kinds: newDocument, about, layerStyle {effect?}, colorPicker {target: foreground|background}, command {command}) / `ui.dialog.set {dialog, field, value}` / `ui.dialog.confirm {dialog, wait?}` / `ui.dialog.cancel {dialog}`
 //! - `ui.dialog.apply {dialog}`: commit Preferences changes without closing the dialog
@@ -74,7 +74,7 @@ pub enum Outcome {
 /// field's value is validated before the first one is applied, so a typo, an unknown field, a
 /// bad value or a bad nested key can't reply with success while nothing — or only half of it —
 /// changed (#412).
-pub const UI_SET_FIELDS: [&str; 29] = [
+pub const UI_SET_FIELDS: [&str; 31] = [
     "tool",
     "panels",
     "dock",
@@ -93,7 +93,9 @@ pub const UI_SET_FIELDS: [&str; 29] = [
     "brushTab",
     "brushesView",
     "brushPicker",
-    "brushPickerView",
+    "brushPickerName",
+    "brushPickerStroke",
+    "brushPickerTip",
     "brushSize",
     "gradientBlendMode",
     "gradientClassic",
@@ -400,10 +402,21 @@ fn dispatch(app: &mut PhotocraftApp, ctx: &egui::Context, req: &ControlRequest) 
                     Some(v) => serde_json::from_value(v.clone()).map(Some).map_err(|e| format!("brushesView: {e} (list, grid)"))?,
                     None => None,
                 };
-                let brush_picker_view = match p.get("brushPickerView") {
-                    Some(v) => serde_json::from_value(v.clone()).map(Some).map_err(|e| format!("brushPickerView: {e} (list, grid)"))?,
-                    None => None,
-                };
+                // The three parts of the picker's cards. At least one stays on (a rejected call
+                // leaves them all alone).
+                let brush_picker_name = bool_field(p, "brushPickerName")?;
+                let brush_picker_stroke = bool_field(p, "brushPickerStroke")?;
+                let brush_picker_tip = bool_field(p, "brushPickerTip")?;
+                if [brush_picker_name, brush_picker_stroke, brush_picker_tip].iter().any(Option::is_some) {
+                    let on = [
+                        brush_picker_name.unwrap_or(app.ui.brush_picker_list.show_name),
+                        brush_picker_stroke.unwrap_or(app.ui.brush_picker_list.show_stroke),
+                        brush_picker_tip.unwrap_or(app.ui.brush_picker_list.show_tip),
+                    ];
+                    if !on.iter().any(|b| *b) {
+                        return Err("brushPickerName, brushPickerStroke and brushPickerTip: at least one must stay on".into());
+                    }
+                }
                 // `Some(None)` is an explicit null, which closes the picker (a missing field
                 // leaves it alone).
                 let brush_picker = match p.get("brushPicker") {
@@ -529,8 +542,14 @@ fn dispatch(app: &mut PhotocraftApp, ctx: &egui::Context, req: &ControlRequest) 
                 if let Some(v) = brushes_view {
                     app.ui.brushes_panel.view = v;
                 }
-                if let Some(v) = brush_picker_view {
-                    app.ui.brush_picker_list.view = v;
+                if let Some(v) = brush_picker_name {
+                    app.ui.brush_picker_list.show_name = v;
+                }
+                if let Some(v) = brush_picker_stroke {
+                    app.ui.brush_picker_list.show_stroke = v;
+                }
+                if let Some(v) = brush_picker_tip {
+                    app.ui.brush_picker_list.show_tip = v;
                 }
                 if let Some(at) = brush_picker {
                     app.ui.brush_picker = at;
@@ -875,7 +894,15 @@ pub fn inspect(app: &PhotocraftApp, ctx: &egui::Context) -> Value {
         "layerMenu": app.ui.layer_menu,
         "brushPicker": app.ui.brush_picker.map(|pos| json!({
             "pos": pos,
-            "list": app.ui.brush_picker_list,
+            "list": {
+                "collapsed": app.ui.brush_picker_list.collapsed,
+                "filter": app.ui.brush_picker_list.filter,
+                "renaming": app.ui.brush_picker_list.renaming,
+                // The card's parts (`view` is the Brushes panel's listing and doesn't apply).
+                "showName": app.ui.brush_picker_list.show_name,
+                "showStroke": app.ui.brush_picker_list.show_stroke,
+                "showTip": app.ui.brush_picker_list.show_tip,
+            },
         })),
         "canvasToolMenu": app.ui.canvas_tool_menu.as_ref().map(|menu| {
             json!({
@@ -1287,18 +1314,25 @@ mod tests {
     }
 
     #[test]
-    fn ui_set_opens_the_brush_preset_picker_and_sets_its_view() {
+    fn ui_set_opens_the_brush_preset_picker_and_sets_its_cards() {
         let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
         let ctx = egui::Context::default();
-        assert_eq!(app.ui.brush_picker_list.view, crate::brush_panel::BrushesView::Grid, "tip thumbnails by default");
-        let r = call(&mut app, &ctx, "ui.set", json!({"tool": "brush", "brushPicker": [120, 80], "brushPickerView": "list"}));
+        let list = &app.ui.brush_picker_list;
+        assert!(list.show_name && list.show_stroke && list.show_tip, "every card part is on by default");
+        let r = call(&mut app, &ctx, "ui.set", json!({"tool": "brush", "brushPicker": [120, 80], "brushPickerStroke": false}));
         assert_eq!(r["ok"], true, "{r}");
         assert_eq!(app.ui.brush_picker, Some([120.0, 80.0]));
-        assert_eq!(app.ui.brush_picker_list.view, crate::brush_panel::BrushesView::List);
-        for bad in [json!({"brushPicker": [1]}), json!({"brushPicker": "here"}), json!({"brushPickerView": "tiles"})] {
+        assert!(!app.ui.brush_picker_list.show_stroke);
+        for bad in [
+            json!({"brushPicker": [1]}),
+            json!({"brushPicker": "here"}),
+            json!({"brushPickerStroke": "nope"}),
+            json!({"brushPickerName": false, "brushPickerStroke": false, "brushPickerTip": false}),
+        ] {
             assert_eq!(call(&mut app, &ctx, "ui.set", bad.clone())["ok"], false, "{bad}");
         }
         assert_eq!(app.ui.brush_picker, Some([120.0, 80.0]), "a bad value leaves the picker alone");
+        assert!(app.ui.brush_picker_list.show_name, "a rejected call leaves the card parts alone");
         assert_eq!(call(&mut app, &ctx, "ui.set", json!({"brushPicker": null}))["ok"], true);
         assert_eq!(app.ui.brush_picker, None);
     }
@@ -1326,11 +1360,13 @@ mod tests {
         assert_eq!(click["ok"], true, "{click}");
         let open = call(&mut app, &ctx, "ui.inspect", json!({}));
         assert!(open["result"]["brushPicker"]["pos"].is_array(), "{open}");
-        assert_eq!(open["result"]["brushPicker"]["list"]["view"], "grid");
+        assert_eq!(open["result"]["brushPicker"]["list"]["showName"], true);
+        assert_eq!(open["result"]["brushPicker"]["list"]["showStroke"], true);
+        assert_eq!(open["result"]["brushPicker"]["list"]["showTip"], true);
 
-        assert_eq!(call(&mut app, &ctx, "ui.set", json!({"brushPickerView": "list"}))["ok"], true);
+        assert_eq!(call(&mut app, &ctx, "ui.set", json!({"brushPickerTip": false}))["ok"], true);
         let changed = call(&mut app, &ctx, "ui.inspect", json!({}));
-        assert_eq!(changed["result"]["brushPicker"]["list"]["view"], "list");
+        assert_eq!(changed["result"]["brushPicker"]["list"]["showTip"], false);
 
         assert_eq!(call(&mut app, &ctx, "ui.set", json!({"brushPicker": null}))["ok"], true);
         let closed_again = call(&mut app, &ctx, "ui.inspect", json!({}));

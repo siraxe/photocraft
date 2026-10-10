@@ -88,8 +88,11 @@ fn rows_are_centred(h: &Harness<'_, PhotocraftApp>, indent: f32, groups: usize) 
     assert!(wrapped, "no group wrapped onto a second row, so the rows weren't compared");
 }
 
+/// The picker's cards: one full-width 2 × 2 card per preset (tip and stroke on top, the name
+/// across the bottom), and a hidden part shrinks the card — with only the tip and the name on,
+/// the name takes the stroke's cell and the card is one row tall.
 #[test]
-fn the_brush_preset_picker_grid_is_centred() {
+fn brush_picker_cards_follow_the_part_boxes() {
     let mut h = Harness::builder().with_size(vec2(1440.0, 900.0)).with_max_steps(64).build_eframe(|cc| {
         PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
         PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default())
@@ -98,8 +101,27 @@ fn the_brush_preset_picker_grid_is_centred() {
     h.state_mut().ui.tool = crate::state::Tool::Brush;
     h.state_mut().ui.brush_picker = Some([300.0, 120.0]);
     h.run_steps(8);
-    assert_eq!(h.state().ui.brush_picker_list.view, BrushesView::Grid);
-    rows_are_centred(&h, crate::brush_picker::LIST.indent, 2);
+    let presets = h.state().session.tools.presets.clone();
+    let cards = |h: &Harness<'_, PhotocraftApp>| -> Vec<Rect> {
+        h.query_all_by_role(Role::Button)
+            .filter(|n| n.accesskit_node().label().is_some_and(|l| presets.iter().any(|p| p.name == l)))
+            .map(|n| n.rect())
+            .collect()
+    };
+    let two_rows = CARD_PAD * 2.0 + CARD_TOP_H + CARD_NAME_H;
+    let one_row = CARD_PAD * 2.0 + CARD_TOP_H;
+    let all_on = cards(&h);
+    assert!(all_on.len() >= 2, "{} cards", all_on.len());
+    assert!(all_on.iter().all(|r| (r.height() - two_rows).abs() < 0.5 && r.width() > 250.0), "{all_on:?}");
+    h.state_mut().ui.brush_picker_list.show_stroke = false;
+    h.run_steps(2);
+    assert!(cards(&h).iter().all(|r| (r.height() - one_row).abs() < 0.5), "tip + name: one row, the name in the stroke's cell");
+    h.state_mut().ui.brush_picker_list.show_name = false;
+    h.run_steps(2);
+    assert!(cards(&h).iter().all(|r| (r.height() - one_row).abs() < 0.5), "tip + stroke: one row");
+    h.state_mut().ui.brush_picker_list.show_stroke = true;
+    h.run_steps(2);
+    assert!(cards(&h).iter().all(|r| (r.height() - one_row).abs() < 0.5), "tip only: one row");
 }
 
 #[test]
