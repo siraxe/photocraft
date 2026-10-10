@@ -401,7 +401,7 @@ const CARD_MAX_W: f32 = 300.0;
 const CARD_TIP_ONLY_W: f32 = 60.0;
 const CARD_TIP_ONLY_H: f32 = 70.0;
 /// Tip + name, no stroke: a grid of [`CARD_TIP_NAME_W`] × [`CARD_TIP_NAME_H`] cells (scale 1).
-const CARD_TIP_NAME_W: f32 = 200.0;
+const CARD_TIP_NAME_W: f32 = 150.0;
 const CARD_TIP_NAME_H: f32 = 70.0;
 /// The footer scale's floor for heights and padding (the widths keep shrinking).
 const CARD_MIN_H_SCALE: f32 = 0.50;
