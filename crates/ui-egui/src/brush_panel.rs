@@ -94,8 +94,8 @@ pub struct BrushesPanelState {
     /// The Brush Preset picker's cards: their size scale, from the picker's footer slider
     /// (`crate::brush_picker::body`). 1 is the standard size; the cards' width, height and
     /// insides multiply by it (`crate::brushes_tab`) — the height down to a 0.50 floor, the
-    /// width all the way — and at or below the compact threshold the tips drop the size number
-    /// under them and take their cell whole.
+    /// width all the way — the text holds its 1.0 size, and at or below the compact threshold
+    /// the tips drop the size number under them and take their cell whole.
     pub scale: f32,
 }
 

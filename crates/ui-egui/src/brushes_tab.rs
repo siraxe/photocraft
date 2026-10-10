@@ -403,10 +403,13 @@ const CARD_TIP_ONLY_H: f32 = 70.0;
 /// Tip + name, no stroke: a grid of [`CARD_TIP_NAME_W`] × [`CARD_TIP_NAME_H`] cells (scale 1).
 const CARD_TIP_NAME_W: f32 = 200.0;
 const CARD_TIP_NAME_H: f32 = 70.0;
-/// The footer scale's floor for heights, padding and text (the widths keep shrinking).
+/// The footer scale's floor for heights and padding (the widths keep shrinking).
 const CARD_MIN_H_SCALE: f32 = 0.50;
 /// At or below this scale the tips drop their size numbers and fill their cell whole.
-const CARD_COMPACT_SCALE: f32 = 0.40;
+const CARD_COMPACT_SCALE: f32 = 0.50;
+/// stay readable from the smallest card to the largest.
+const CARD_NAME_FONT: f32 = 12.0;
+const CARD_NUM_FONT: f32 = 11.0;
 
 /// The picker's cards in a list `width` points wide, `indent` past its left edge: how wide each
 /// card is and how many sit in a row. A lone card fills the room up to [`CARD_MAX_W`] × `scale`
@@ -438,8 +441,9 @@ fn tip_and_name(show: (bool, bool, bool)) -> bool {
 /// stroke's cell and the bottom row is gone. At least one part is always on. `show` is the three
 /// gear boxes (name, stroke, tip); `width` is the row slot the card fills (a [`card_columns`]
 /// column or a fixed cell, [`CARD_TIP_ONLY_W`]/[`CARD_TIP_NAME_W`]), and `scale` the footer
-/// slider: heights, padding and text floor at [`CARD_MIN_H_SCALE`], and at or below
-/// [`CARD_COMPACT_SCALE`] the tips drop their size numbers and take their cell whole.
+/// slider: heights and padding floor at [`CARD_MIN_H_SCALE`], the text holds its 1.0 size
+/// ([`CARD_NAME_FONT`], [`CARD_NUM_FONT`]), and at or below [`CARD_COMPACT_SCALE`] the tips
+/// drop their size numbers and take their cell whole.
 #[allow(clippy::too_many_arguments)]
 fn preset_card(
     ui: &mut egui::Ui,
@@ -456,7 +460,8 @@ fn preset_card(
     let compact = scale <= CARD_COMPACT_SCALE;
     let t = Tokens::get(ui.ctx());
     let name_in_top = tip_and_name(show);
-    // Widths (which arrive scaled) keep narrowing with the slider; heights stop at the floor.
+    // Widths (which arrive scaled) keep narrowing with the slider and heights stop at the floor;
+    // the text holds its 1.0 size — the fonts don't take the scale.
     let scale_h = scale.max(CARD_MIN_H_SCALE);
     let pad = CARD_PAD * scale;
     let pad_y = CARD_PAD * scale_h;
@@ -506,7 +511,7 @@ fn preset_card(
                 pos2(cell.center().x, cell.bottom() - 1.0),
                 egui::Align2::CENTER_BOTTOM,
                 format!("{}", pb.size.round() as i64),
-                egui::FontId::proportional(9.0 * scale_h),
+                egui::FontId::proportional(CARD_NUM_FONT),
                 t.text_faint,
             );
         }
@@ -529,7 +534,7 @@ fn preset_card(
                 cell.center().y,
                 cell.right() - 6.0 * scale,
                 &p.name,
-                egui::FontId::proportional(12.0 * scale_h),
+                egui::FontId::proportional(CARD_NAME_FONT),
                 t.text_dim,
             );
         }
@@ -543,7 +548,7 @@ fn preset_card(
             cell.center().y,
             cell.right() - 6.0 * scale,
             &p.name,
-            egui::FontId::proportional(12.0 * scale_h),
+            egui::FontId::proportional(CARD_NAME_FONT),
             t.text_dim,
         );
     }
@@ -647,8 +652,9 @@ struct Draw<'a> {
     show: (bool, bool, bool),
     /// The picker cards' size scale (its footer slider, 1 = standard): multiplies [`CARD_MAX_W`]
     /// and [`CARD_MAX_H`], or [`CARD_TIP_ONLY_W`]/[`CARD_TIP_ONLY_H`] for tip-only cards and
-    /// [`CARD_TIP_NAME_W`]/[`CARD_TIP_NAME_H`] for tip-and-name ones, and at or below
-    /// [`CARD_COMPACT_SCALE`] the tips drop their size numbers.
+    /// [`CARD_TIP_NAME_W`]/[`CARD_TIP_NAME_H`] for tip-and-name ones; the text holds its 1.0
+    /// size ([`CARD_NAME_FONT`], [`CARD_NUM_FONT`]); at or below [`CARD_COMPACT_SCALE`] the tips
+    /// drop their size numbers.
     scale: f32,
 }
 

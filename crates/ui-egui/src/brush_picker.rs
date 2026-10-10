@@ -268,8 +268,9 @@ pub fn body(
 /// The footer's card-scale slider: how big the preset cards are drawn (1 the standard, 2 the
 /// largest), bare like the Size and Hardness sliders — a readout would be noise for a control
 /// that's set by feel. The value snaps to hundredths and runs over [`SCALE_RANGE`], from 0.15,
-/// under which the cards' padding and rows stop making sense; 0.30 and below is where
-/// [`brushes_tab`]'s cards go compact, the tips dropping their size numbers.
+/// under which the cards' padding and rows stop making sense; 0.40 and below is where
+/// [`brushes_tab`]'s cards go compact, the tips dropping their size numbers (the text itself
+/// holds its size at every scale).
 fn scale_slider(ui: &mut egui::Ui, st: &mut BrushesPanelState) {
     let w = (ui.available_width() - GRIP_ROOM).max(60.0);
     ui.allocate_ui_with_layout(vec2(w, SLIDER_H), egui::Layout::left_to_right(egui::Align::Center), |ui| {
