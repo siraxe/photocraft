@@ -1908,6 +1908,32 @@ mod tests {
     }
 
     #[test]
+    fn brush_picker_view_survives_a_restart() {
+        let (mut app, store) = app_with_store();
+        let ctx = egui::Context::default();
+        tick(&mut app, &ctx);
+        app.ui.brush_picker_list.show_stroke = false;
+        app.ui.brush_picker_list.scale = 0.4;
+        crate::brush_picker::persist(&mut app, &ctx);
+        tick(&mut app, &ctx);
+        assert_eq!(stored(&store)["brushPicker"]["showStroke"], json!(false));
+        // A restart gets the view back at startup, before the picker is ever opened.
+        let saved = store.lock().unwrap().clone().unwrap();
+        let (mut app2, _) = app_with_saved(Some(saved));
+        tick(&mut app2, &ctx);
+        assert!(!app2.ui.brush_picker_list.show_stroke);
+        assert!(app2.ui.brush_picker_list.show_name && app2.ui.brush_picker_list.show_tip);
+        assert!((app2.ui.brush_picker_list.scale - 0.4).abs() < 1e-6);
+        // A hand-edited file: the scale is clamped to the slider's range and the last part comes
+        // back on — an empty card would show no brush at all.
+        let bad = json!({"brushPicker": {"showName": false, "showStroke": false, "showTip": false, "scale": 9.0}}).to_string();
+        let (mut app3, _) = app_with_saved(Some(bad));
+        tick(&mut app3, &ctx);
+        assert_eq!(app3.ui.brush_picker_list.scale, *crate::brush_picker::SCALE_RANGE.end());
+        assert!(app3.ui.brush_picker_list.show_name && app3.ui.brush_picker_list.show_stroke && app3.ui.brush_picker_list.show_tip);
+    }
+
+    #[test]
     fn show_tooltips_preferences_turn_tooltips_off() {
         let (mut app, _) = app_with_store();
         let ctx = egui::Context::default();

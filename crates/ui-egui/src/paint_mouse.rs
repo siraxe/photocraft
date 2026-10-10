@@ -155,11 +155,10 @@ pub fn show_picker(app: &mut PhotocraftApp, ctx: &egui::Context) {
     // sits around it, and together they keep the whole picker on screen.
     let id = egui::Id::new("canvas-brush-picker");
     let size_id = id.with("content-size");
-    let content = app
-        .ui
-        .brush_picker_size
-        .or_else(|| ctx.data_mut(|d| d.get_persisted::<[f32; 2]>(size_id)))
-        .map_or_else(|| egui::vec2(crate::brush_picker::DEFAULT_SIZE[0], crate::brush_picker::DEFAULT_SIZE[1]), |s| crate::brush_picker::clamp_size(s, screen.size()));
+    let content = app.ui.brush_picker_size.or_else(|| ctx.data_mut(|d| d.get_persisted::<[f32; 2]>(size_id))).map_or_else(
+        || egui::vec2(crate::brush_picker::DEFAULT_SIZE[0], crate::brush_picker::DEFAULT_SIZE[1]),
+        |s| crate::brush_picker::clamp_size(s, screen.size()),
+    );
     // Remember it for the picker's next open, and — egui's memory being saved — the next run.
     ctx.data_mut(|d| d.insert_persisted(size_id, [content.x, content.y]));
     let style = ctx.global_style();
@@ -169,9 +168,8 @@ pub fn show_picker(app: &mut PhotocraftApp, ctx: &egui::Context) {
         let before = app.session.tools.brush.clone();
         let mut b = before.clone();
         let list = &mut app.ui.brush_picker_list;
-        let frame = egui::Frame::popup(ui.style()).show(ui, |ui| {
-            crate::brush_picker::body(ui, &mut b, &app.session.tools.presets, app.session.tools.current_preset.as_deref(), list, content)
-        });
+        let frame = egui::Frame::popup(ui.style())
+            .show(ui, |ui| crate::brush_picker::body(ui, &mut b, &app.session.tools.presets, app.session.tools.current_preset.as_deref(), list, content));
         let picks = frame.inner;
         // The corner grip resizes the picker, and the size is remembered across opens.
         if let Some(new) = crate::brush_picker::resize_grip(ui, frame.response.rect, content) {

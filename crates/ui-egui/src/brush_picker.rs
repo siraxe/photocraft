@@ -236,7 +236,12 @@ pub fn body(
     ui.horizontal(|ui| {
         icons::paint(ui, egui::Rect::from_min_size(ui.cursor().min + vec2(0.0, 3.0), vec2(16.0, 16.0)), "search", 14.0, t.text_faint);
         ui.add_space(20.0);
-        ui.add(egui::TextEdit::singleline(&mut st.filter).hint_text(tl!("Search Brushes")).desired_width((size.x - 118.0).max(60.0)).id_salt("brush-picker-search"));
+        ui.add(
+            egui::TextEdit::singleline(&mut st.filter)
+                .hint_text(tl!("Search Brushes"))
+                .desired_width((size.x - 118.0).max(60.0))
+                .id_salt("brush-picker-search"),
+        );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             gear_menu(ui, current, presets, st, &mut picks);
             if named(icons::button(ui, "square-plus", 24.0, false, "Create new brush preset from the current settings"), "New Brush Preset").clicked() {
@@ -344,9 +349,7 @@ fn gear_menu(ui: &mut egui::Ui, current: Option<&str>, presets: &[BrushPreset], 
         // What a preset's card shows: a checkbox per part. At least one stays on — clicking the
         // last checked box does nothing, since an empty card would show no brush at all.
         let on = [st.show_name, st.show_stroke, st.show_tip].into_iter().filter(|b| *b).count();
-        for (flag, label) in
-            [(&mut st.show_name, tl!("Brush Name")), (&mut st.show_stroke, tl!("Brush Stroke")), (&mut st.show_tip, tl!("Brush Tip"))]
-        {
+        for (flag, label) in [(&mut st.show_name, tl!("Brush Name")), (&mut st.show_stroke, tl!("Brush Stroke")), (&mut st.show_tip, tl!("Brush Tip"))] {
             let was = *flag;
             if ui.checkbox(flag, label).changed() && was && on == 1 {
                 *flag = true;

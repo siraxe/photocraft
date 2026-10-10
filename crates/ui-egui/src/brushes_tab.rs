@@ -441,7 +441,16 @@ fn tip_and_name(show: (bool, bool, bool)) -> bool {
 /// slider: heights, padding and text floor at [`CARD_MIN_H_SCALE`], and at or below
 /// [`CARD_COMPACT_SCALE`] the tips drop their size numbers and take their cell whole.
 #[allow(clippy::too_many_arguments)]
-fn preset_card(ui: &mut egui::Ui, p: &BrushPreset, current: bool, presets: &[BrushPreset], show: (bool, bool, bool), width: f32, scale: f32, acts: &mut Vec<Action>) {
+fn preset_card(
+    ui: &mut egui::Ui,
+    p: &BrushPreset,
+    current: bool,
+    presets: &[BrushPreset],
+    show: (bool, bool, bool),
+    width: f32,
+    scale: f32,
+    acts: &mut Vec<Action>,
+) {
     let (show_name, show_stroke, show_tip) = show;
     let tip_only = tip_only(show);
     let compact = scale <= CARD_COMPACT_SCALE;
@@ -514,13 +523,29 @@ fn preset_card(ui: &mut egui::Ui, p: &BrushPreset, current: bool, presets: &[Bru
             let sr = egui::Rect::from_min_size(pos2(cell.left() + 8.0 * scale, cell.center().y - 18.0 * scale_h), vec2(w, 36.0 * scale_h));
             ui.painter().image(stroke.id(), sr, full_uv(), Color32::WHITE);
         } else {
-            crate::layer_row_ui::label(ui.painter(), cell.left() + 8.0 * scale, cell.center().y, cell.right() - 6.0 * scale, &p.name, egui::FontId::proportional(12.0 * scale_h), t.text_dim);
+            crate::layer_row_ui::label(
+                ui.painter(),
+                cell.left() + 8.0 * scale,
+                cell.center().y,
+                cell.right() - 6.0 * scale,
+                &p.name,
+                egui::FontId::proportional(12.0 * scale_h),
+                t.text_dim,
+            );
         }
     }
     if name_h > 0.0 {
         // The merged bottom row: the name across the whole card.
         let cell = egui::Rect::from_min_size(pos2(inner.left(), top.bottom()), vec2(inner.width(), name_h));
-        crate::layer_row_ui::label(ui.painter(), cell.left() + 6.0 * scale, cell.center().y, cell.right() - 6.0 * scale, &p.name, egui::FontId::proportional(12.0 * scale_h), t.text_dim);
+        crate::layer_row_ui::label(
+            ui.painter(),
+            cell.left() + 6.0 * scale,
+            cell.center().y,
+            cell.right() - 6.0 * scale,
+            &p.name,
+            egui::FontId::proportional(12.0 * scale_h),
+            t.text_dim,
+        );
     }
     let resp = resp.on_hover_text(&p.name);
     // A tip-only card's grid drops between columns, like the Brushes tab's: the rest drop between
@@ -638,9 +663,10 @@ fn draw_nodes(ui: &mut egui::Ui, d: &Draw, nodes: &[Node], depth: usize, acts: &
             return;
         }
         if d.layout.cards {
-            // The picker's cards: [`card_columns`] cards sharing each row, or a centred grid
-            // of fixed cells ([`CARD_TIP_ONLY_W`], [`CARD_TIP_NAME_W`]) for the two
-            // stripped-down modes. The scale floors at the slider's own bottom end.
+            // The picker's cards: [`card_columns`] cards sharing each row, a centred grid of
+            // small [`CARD_TIP_ONLY_W`] cells, or card-wide [`CARD_TIP_NAME_W`] cells snapped
+            // to the indent like the full-card rows. The scale floors at the slider's own
+            // bottom end.
             let scale = d.scale.max(*crate::brush_picker::SCALE_RANGE.start());
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing = vec2(GRID_GAP, GRID_GAP);
@@ -652,7 +678,12 @@ fn draw_nodes(ui: &mut egui::Ui, d: &Draw, nodes: &[Node], depth: usize, acts: &
                     None
                 };
                 if let Some(cell) = fixed {
-                    let (left, cols) = grid_columns(ui.available_width(), cell, indent);
+                    // Tip-only cells centre their whole columns like a grid; the card-sized
+                    // tip-and-name cells start at the indent.
+                    let (mut left, cols) = grid_columns(ui.available_width(), cell, indent);
+                    if tip_and_name(d.show) {
+                        left = indent;
+                    }
                     for row in run.chunks(cols) {
                         ui.horizontal(|ui| {
                             ui.add_space(left);

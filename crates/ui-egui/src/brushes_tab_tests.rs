@@ -91,8 +91,8 @@ fn rows_are_centred(h: &Harness<'_, PhotocraftApp>, indent: f32, groups: usize) 
 /// The picker's cards: one full-width 2 × 2 card per preset (tip and stroke on top, the name
 /// across the bottom), and a hidden part shrinks the card — with only the tip and the name on,
 /// the name takes the stroke's cell and the card takes its own height ([`CARD_TIP_NAME_H`]) and
-/// width ([`CARD_TIP_NAME_W`]); with only the tip on, the card takes the tip-only cell's own
-/// height.
+/// width ([`CARD_TIP_NAME_W`]) snapped to the list's left edge; with only the tip on, the card
+/// takes the tip-only cell's own height, with the grid's whole columns centred.
 #[test]
 fn brush_picker_cards_follow_the_part_boxes() {
     let mut h = Harness::builder().with_size(vec2(1440.0, 900.0)).with_max_steps(64).build_eframe(|cc| {
@@ -117,16 +117,47 @@ fn brush_picker_cards_follow_the_part_boxes() {
     assert!(all_on.iter().all(|r| (r.height() - full).abs() < 0.5 && r.width() > 250.0), "{all_on:?}");
     h.state_mut().ui.brush_picker_list.show_stroke = false;
     h.run_steps(2);
+    let tip_name = cards(&h);
     assert!(
-        cards(&h).iter().all(|r| (r.height() - CARD_TIP_NAME_H).abs() < 0.5 && (r.width() - CARD_TIP_NAME_W).abs() < 0.5),
+        tip_name.iter().all(|r| (r.height() - CARD_TIP_NAME_H).abs() < 0.5 && (r.width() - CARD_TIP_NAME_W).abs() < 0.5),
         "tip + name: the name in the stroke's cell, its own cell size"
     );
+    assert!(tip_name.iter().all(|r| (r.left() - all_on[0].left()).abs() < 0.5), "snapped to the left edge: {tip_name:?}");
     h.state_mut().ui.brush_picker_list.show_name = false;
     h.run_steps(2);
-    assert!(cards(&h).iter().all(|r| (r.height() - CARD_TIP_ONLY_H).abs() < 0.5), "tip only: its own cell");
+    let tip_only = cards(&h);
+    assert!(tip_only.iter().all(|r| (r.height() - CARD_TIP_ONLY_H).abs() < 0.5), "tip only: its own cell");
+    assert!(tip_only[0].left() > all_on[0].left() + 5.0, "the tip-only grid's columns stay centred: {tip_only:?}");
     h.state_mut().ui.brush_picker_list.show_stroke = true;
     h.run_steps(2);
     assert!(cards(&h).iter().all(|r| (r.height() - one_row).abs() < 0.5), "tip + stroke: one row");
+}
+
+/// The footer slider's widths take the raw scale; heights, padding and text stop at
+/// [`CARD_MIN_H_SCALE`], so at the slider's 0.15 the cards stand at 35 pt ([`CARD_MAX_H`] at
+/// half scale) with the widths a fraction of that.
+#[test]
+fn brush_picker_cards_floor_their_height_but_not_their_width() {
+    let mut h = Harness::builder().with_size(vec2(1440.0, 900.0)).with_max_steps(64).build_eframe(|cc| {
+        PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
+        PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default())
+    });
+    h.state_mut().run("file.new", serde_json::json!({"width": 400, "height": 300})).unwrap();
+    h.state_mut().ui.tool = crate::state::Tool::Brush;
+    h.state_mut().ui.brush_picker = Some([300.0, 120.0]);
+    h.state_mut().ui.brush_picker_list.scale = 0.15;
+    h.run_steps(8);
+    let presets = h.state().session.tools.presets.clone();
+    let cards: Vec<Rect> = h
+        .query_all_by_role(Role::Button)
+        .filter(|n| n.accesskit_node().label().is_some_and(|l| presets.iter().any(|p| p.name == l)))
+        .map(|n| n.rect())
+        .collect();
+    assert!(cards.len() >= 2, "{} cards", cards.len());
+    for r in &cards {
+        assert!((r.height() - CARD_MAX_H * CARD_MIN_H_SCALE).abs() < 0.5, "the height floors at half scale: {r:?}");
+        assert!(r.width() <= CARD_MAX_W * 0.15 + 2.0, "the width keeps the raw scale, well past its half: {r:?}");
+    }
 }
 
 #[test]
