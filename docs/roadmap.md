@@ -92,6 +92,12 @@ Confidence: moderate — the next users of 0.2.x will move these numbers either 
 
 ### By dimension
 
+2026-10-10: [Shape stroke controls](shape-strokes.md) expose existing Solid/Dashed/Dotted,
+custom dash/gap, offset, caps, joins, alignment, miter-limit and opacity capabilities in
+Shape/Pen options and Properties. Properties stages a cached canvas preview before one
+undoable edit. Gradient fill controls from #1053 remain open; the Line tool still draws a
+filled bar. This extends UI reachability and does not claim Photoshop-authored stroke parity.
+
 | Dimension | Measured / evidence (2026-10-05) | Grade | Notes |
 |---|---|---|---|
 | Menu wiring | 626/626 menu items dispatch a command (`parity.md`) | high but shallow | Says nothing about behaviour. |
@@ -131,6 +137,16 @@ for four synthetic stroke regions (50–300 px holes), with identical source dis
 Bounding the mask table to the hole and pruning losing SSD candidates reduced table storage
 by about 90–93 percent there. Full 24–36 MP kernel inputs improved 4.60–6.24x, but normal
 engine strokes already use a cropped region. See [method and limits](proximity-match-performance.md).
+
+2026-10-09: the Remove tool is in the J flyout (`paint.remove`, a background job). A stroke
+around an object also removes what it encloses. The fill is non-local patch completion with
+texture features (A. Newson et al., IPOL 2017: `crates/algo/src/nonlocal.rs`), finished by a
+best-patch copy and gradient-domain seam hiding. On 20 holes in public-domain photos
+(`remove_quality`, `docs/development.md` › Remove Tool quality) the fill keeps 0.89 of the
+original's texture (Wexler/PatchMatch completion as Content-Aware Fill uses it: 0.54). On a 24 MP
+document a 100 px ring takes 120 ms and a 1000 px ring 2.5 s (`remove_bench`). It is not
+generative: large objects over complex structure fill less convincingly than Photoshop's AI mode
+(#41).
 
 2026-10-08: the tools update above is checked against the current toolbar groups in
 [`panels.rs`](../crates/ui-egui/src/panels.rs), the Pencil and tool-cycle tests in

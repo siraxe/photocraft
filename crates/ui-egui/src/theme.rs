@@ -532,22 +532,33 @@ pub fn install_fonts(ctx: &egui::Context) {
     install_fonts_with(ctx, crate::cjk_fonts::Sources::system());
 }
 
-/// [`install_fonts`] with the CJK fallback fonts taken from `cjk` (tests swap the sources).
+/// [`install_fonts`] with the CJK/Thai fallback fonts taken from `cjk` (tests swap the sources).
 pub fn install_fonts_with(ctx: &egui::Context, cjk: crate::cjk_fonts::Sources) {
     let mut fonts = FontDefinitions::default();
-    let add = |fonts: &mut FontDefinitions, name: &str, bytes: &'static [u8]| {
+    // The bundled fonts are inflated on first use (photocraft_text::fonts). Should one ever fail
+    // to inflate (empty bytes), it is left out and egui's default fonts draw that text.
+    let add = |fonts: &mut FontDefinitions, name: &str, bytes: &'static [u8]| -> Option<String> {
+        if bytes.is_empty() {
+            log::error!("bundled font {name} is unavailable; using the default UI font");
+            return None;
+        }
         fonts.font_data.insert(name.to_owned(), Arc::new(FontData::from_static(bytes)));
+        Some(name.to_owned())
     };
-    add(&mut fonts, "Inter", photocraft_text::fonts::INTER_REGULAR);
-    add(&mut fonts, "Inter-Medium", photocraft_text::fonts::INTER_MEDIUM);
-    add(&mut fonts, "Inter-SemiBold", photocraft_text::fonts::INTER_SEMIBOLD);
-    add(&mut fonts, "JetBrainsMono", photocraft_text::fonts::JETBRAINS_MONO_REGULAR);
-    fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "Inter".to_owned());
-    fonts.families.entry(FontFamily::Monospace).or_default().insert(0, "JetBrainsMono".to_owned());
+    let inter = add(&mut fonts, "Inter", photocraft_text::fonts::INTER_REGULAR.as_slice());
+    let medium = add(&mut fonts, "Inter-Medium", photocraft_text::fonts::INTER_MEDIUM.as_slice());
+    let semibold = add(&mut fonts, "Inter-SemiBold", photocraft_text::fonts::INTER_SEMIBOLD.as_slice());
+    let mono = add(&mut fonts, "JetBrainsMono", photocraft_text::fonts::JETBRAINS_MONO_REGULAR.as_slice());
+    if let Some(inter) = inter {
+        fonts.families.entry(FontFamily::Proportional).or_default().insert(0, inter);
+    }
+    if let Some(mono) = mono {
+        fonts.families.entry(FontFamily::Monospace).or_default().insert(0, mono);
+    }
     // Named weights fall back to the default stack for missing glyphs.
-    let fallback: Vec<String> = fonts.families[&FontFamily::Proportional].clone();
-    for (fam, primary) in [("medium", "Inter-Medium"), ("semibold", "Inter-SemiBold")] {
-        let mut stack = vec![primary.to_owned()];
+    let fallback: Vec<String> = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
+    for (fam, primary) in [("medium", medium), ("semibold", semibold)] {
+        let mut stack: Vec<String> = primary.into_iter().collect();
         stack.extend(fallback.iter().cloned());
         fonts.families.insert(FontFamily::Name(fam.into()), stack);
     }
@@ -567,7 +578,7 @@ pub fn install_fonts_with(ctx: &egui::Context, cjk: crate::cjk_fonts::Sources) {
     {
         ctx.add_plugin(UiFontSizePlugin { applied: size, defer_after_install: true });
     }
-    // Japanese / Chinese / Korean fallback fonts (craft-fonts' Japanese ones if built in, then
+    // Japanese / Chinese / Korean / Thai fallback fonts (craft-fonts' Japanese ones if built in, then
     // the system's) are registered on demand (cjk_fonts.rs).
     crate::cjk_fonts::install_with(ctx, cjk);
 }
@@ -665,6 +676,9 @@ pub fn mono(size: f32) -> FontId {
 
 /// Apply a theme to egui's global style and publish its tokens.
 pub fn apply(ctx: &egui::Context, kind: ThemeKind) {
+    // Keep native windows at SystemDefault so macOS continues reporting OS appearance changes,
+    // including when an integration or restored egui state pinned its own theme preference.
+    ctx.set_theme(egui::ThemePreference::System);
     let t = Tokens::for_kind(kind);
     ctx.data_mut(|d| d.insert_temp(egui::Id::new("photocraft-theme"), t));
     let mut v = if t.dark() { Visuals::dark() } else { Visuals::light() };
@@ -731,6 +745,11 @@ pub fn apply(ctx: &egui::Context, kind: ThemeKind) {
         s.spacing.scroll = if t.bevel { egui::style::ScrollStyle::solid() } else { egui::style::ScrollStyle::thin() };
         s.spacing.tooltip_width = 280.0;
     });
+    // egui selects its style branch using OS appearance, independently of PhotoCraft's fixed
+    // Dark/Light mode or platform appearance service. Both branches need the selected palette.
+    let style = ctx.global_style();
+    ctx.set_style_of(egui::Theme::Light, Arc::clone(&style));
+    ctx.set_style_of(egui::Theme::Dark, style);
 }
 
 /// Seconds the pointer rests on a control before its tooltip shows.
@@ -848,6 +867,32 @@ mod tests {
         let s = Tokens::for_kind(ThemeKind::SolarizedDark);
         assert!(s.dark() && !s.bevel && s.kind == ThemeKind::SolarizedDark && s.card == Color32::from_rgb(7, 54, 66));
         assert_eq!(ThemeKind::from_name("neon"), None);
+    }
+
+    #[test]
+    fn every_palette_keeps_complete_egui_styles_when_the_os_changes() {
+        for kind in ThemeKind::ALL {
+            let ctx = egui::Context::default();
+            ctx.run_ui(egui::RawInput { system_theme: Some(egui::Theme::Dark), ..Default::default() }, |ui| apply(ui.ctx(), kind)).textures_delta.clear();
+            let expected = ctx.global_style();
+            for appearance in [Some(egui::Theme::Light), Some(egui::Theme::Dark), None] {
+                ctx.run_ui(egui::RawInput { system_theme: appearance, ..Default::default() }, |_| {}).textures_delta.clear();
+                assert_eq!(Tokens::get(&ctx), Tokens::for_kind(kind));
+                assert_eq!(ctx.global_style(), expected, "{kind:?} changed with {appearance:?}");
+                assert_eq!(ctx.style_of(egui::Theme::Light), expected);
+                assert_eq!(ctx.style_of(egui::Theme::Dark), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn applying_a_palette_clears_a_pinned_native_appearance_preference() {
+        for pinned in [egui::Theme::Light, egui::Theme::Dark] {
+            let ctx = egui::Context::default();
+            ctx.set_theme(pinned);
+            apply(&ctx, ThemeKind::ProMedium);
+            assert_eq!(ctx.options(|o| o.theme_preference), egui::ThemePreference::System);
+        }
     }
 
     #[test]

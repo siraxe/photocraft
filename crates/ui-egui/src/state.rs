@@ -87,6 +87,7 @@ pub enum Tool {
     Hand,
     RotateView,
     Zoom,
+    Remove,
     SpotHealing,
     Healing,
     Patch,
@@ -117,7 +118,7 @@ pub enum Tool {
 }
 
 impl Tool {
-    pub const ALL: [Tool; 52] = [
+    pub const ALL: [Tool; 53] = [
         Tool::Move,
         Tool::RectMarquee,
         Tool::EllipseMarquee,
@@ -143,6 +144,7 @@ impl Tool {
         Tool::Hand,
         Tool::RotateView,
         Tool::Zoom,
+        Tool::Remove,
         Tool::SpotHealing,
         Tool::Healing,
         Tool::Patch,
@@ -201,6 +203,7 @@ impl Tool {
             Tool::Hand => "Hand Tool",
             Tool::RotateView => "Rotate View Tool",
             Tool::Zoom => "Zoom Tool",
+            Tool::Remove => "Remove Tool",
             Tool::SpotHealing => "Spot Healing Brush Tool",
             Tool::Healing => "Healing Brush Tool",
             Tool::Patch => "Patch Tool",
@@ -241,6 +244,7 @@ impl Tool {
                 | Tool::MixerBrush
                 | Tool::Eraser
                 | Tool::BackgroundEraser
+                | Tool::Remove
                 | Tool::SpotHealing
                 | Tool::Healing
                 | Tool::CloneStamp
@@ -270,7 +274,7 @@ impl Tool {
             Tool::Hand => 'H',
             Tool::RotateView => 'R',
             Tool::Zoom => 'Z',
-            Tool::SpotHealing | Tool::Healing | Tool::Patch | Tool::ContentAwareMove | Tool::RedEye => 'J',
+            Tool::Remove | Tool::SpotHealing | Tool::Healing | Tool::Patch | Tool::ContentAwareMove | Tool::RedEye => 'J',
             Tool::CloneStamp | Tool::PatternStamp => 'S',
             Tool::HistoryBrush => 'Y',
             Tool::Blur | Tool::Sharpen | Tool::Smudge => '\0',
@@ -336,6 +340,13 @@ pub struct Panels {
     /// What Tab hid (toolbar, options bar, dock), so a second Tab brings back just those.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hidden_by_tab: Option<[bool; 3]>,
+    /// The right dock's icon rail. An app that embeds PhotoCraft's UI can hide it for a simpler view.
+    #[serde(default = "yes")]
+    pub rail: bool,
+    /// The title bar with the in-window menus. An app that embeds PhotoCraft's UI and draws its own
+    /// bar can hide it; the caption buttons of a custom title bar go with it.
+    #[serde(default = "yes")]
+    pub menu_bar: bool,
     /// The Gradient tool's options-bar swatch opened the Gradient Editor window (`gradient_ui`).
     /// Photoshop opens its Gradient Editor from that swatch; this is the same idea, drawn as a
     /// floating window rather than a modal so the canvas stays usable while a gradient is edited.
@@ -359,6 +370,8 @@ impl Default for Panels {
             toolbar_double: false,
             dock: true,
             hidden_by_tab: None,
+            rail: true,
+            menu_bar: true,
             gradient_editor: false,
         }
     }
@@ -465,6 +478,10 @@ pub struct ToolOptions {
     pub spot_type: String,
     /// Patch: source (repair the selection) | destination (repair where it is dragged).
     pub patch_mode: String,
+    /// Patch: Content-Aware instead of Normal, with its Structure 1..7 and Color 0..10.
+    pub patch_content_aware: bool,
+    pub patch_structure: f32,
+    pub patch_color: f32,
     /// Content-Aware Move: move | extend, Structure 1..7, Color 0..10.
     pub cam_mode: String,
     pub cam_structure: f32,
@@ -488,6 +505,8 @@ pub struct ToolOptions {
     /// radius, polygon sides, line weight.
     pub shape_fill: bool,
     pub stroke_width: f32,
+    #[serde(default)]
+    pub shape_stroke: crate::shape_stroke_ui::StrokeOptions,
     pub corner_radius: f32,
     pub polygon_sides: u32,
     pub line_weight: f32,
@@ -624,6 +643,9 @@ impl Default for ToolOptions {
             clone_sample: "current".into(),
             spot_type: "contentAware".into(),
             patch_mode: "source".into(),
+            patch_content_aware: false,
+            patch_structure: 4.0,
+            patch_color: 0.0,
             cam_mode: "move".into(),
             cam_structure: 4.0,
             cam_color: 0.0,
@@ -639,6 +661,7 @@ impl Default for ToolOptions {
             vector_mode: "path".into(),
             shape_fill: true,
             stroke_width: 0.0,
+            shape_stroke: Default::default(),
             corner_radius: 0.0,
             polygon_sides: 5,
             line_weight: 3.0,
@@ -881,6 +904,8 @@ pub struct UiState {
     /// Pen path under construction.
     #[serde(default)]
     pub pen: Option<crate::vector_ui::PenPath>,
+    #[serde(default)]
+    pub stroke_editor: Option<crate::shape_stroke_ui::StrokeEditor>,
     /// Direct Selection tool: selected anchors and the drag in progress (#790).
     #[serde(default)]
     pub direct_selection: crate::direct_select::DirectSelection,
@@ -1021,6 +1046,7 @@ impl Default for UiState {
             shell: Default::default(),
             layer_filter: Vec::new(),
             pen: None,
+            stroke_editor: None,
             direct_selection: Default::default(),
             selected_path: None,
             panels: Panels::default(),
@@ -1102,7 +1128,10 @@ mod tests {
         assert!(!Tool::RedEye.is_brushlike());
         assert_eq!(Tool::from_name("patternStamp"), Some(Tool::PatternStamp));
         assert_eq!(Tool::from_name("Pattern Stamp Tool"), Some(Tool::PatternStamp));
-        assert_eq!(Tool::ALL.len(), 52);
+        assert_eq!(Tool::ALL.len(), 53);
+        assert_eq!(Tool::from_name("Remove Tool"), Some(Tool::Remove));
+        assert_eq!(Tool::Remove.key(), 'J');
+        assert!(Tool::Remove.is_brushlike());
         assert_eq!(Tool::from_name("RotateView"), Some(Tool::RotateView));
         assert_eq!(Tool::from_name("Rotate View Tool"), Some(Tool::RotateView));
         assert_eq!(Tool::RotateView.key(), 'R');
