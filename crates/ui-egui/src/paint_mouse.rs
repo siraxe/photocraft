@@ -181,9 +181,12 @@ pub fn show_picker(app: &mut PhotocraftApp, ctx: &egui::Context) {
         closes
     });
     // Not a press on a menu the picker opened (the gear, a preset's context menu), nor on the
-    // options-bar chip, whose click toggles the picker.
+    // options-bar chip, whose click toggles the picker. A menu floats over the picker in the
+    // foreground order, so the press is told apart by the layer it lands on, not by any popup
+    // just being open: a press elsewhere closes the picker in the same click that closes the menu.
     let press = ctx.input(|i| i.pointer.any_pressed().then(|| i.pointer.interact_pos()).flatten());
-    let outside = press.is_some_and(|p| !area.response.rect.contains(p) && !crate::brush_picker::on_chip(ctx, p)) && !egui::Popup::is_any_open(ctx);
+    let on_menu = press.is_some_and(|p| ctx.layer_id_at(p).is_some_and(|l| l.order == egui::Order::Foreground));
+    let outside = press.is_some_and(|p| !area.response.rect.contains(p) && !crate::brush_picker::on_chip(ctx, p)) && !on_menu;
     if outside || key_close || area.inner {
         crate::brush_picker::close(&mut app.ui);
     }
