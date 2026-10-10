@@ -2627,7 +2627,9 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
                 Tool::PolygonLasso => polygon_retract(app),
                 _ => false,
             };
-        if tool == Tool::Lasso {
+        // The Lasso reads its own presses and drops the moves of a drag it didn't start, so an
+        // open Free Transform box takes the usual drag path instead (#2153).
+        if tool == Tool::Lasso && !transform_owns_pointer {
             crate::lasso_ui::canvas_input(app, &ctx, &xf, &response);
             (buttons.started, buttons.dragged, buttons.stopped, buttons.clicked) = (false, false, false, false);
         }
@@ -3810,14 +3812,7 @@ pub fn tool_event(app: &mut PhotocraftApp, ev: ToolEvent, mods: egui::Modifiers)
     if crate::magnetic_lasso_ui::pointer(app, ev, mods) {
         return;
     }
-    // ⌘ held is the Move tool (`hold_keys::cmd_moves`). The canvas resolves the held key before
-    // the event (`tool_override`); automation and tests send the modifier with the event.
-    let tool = match app.active_tool() {
-        t if app.tool_override.is_none() && mods.command && crate::hold_keys::cmd_moves(t) && app.ui.transform.is_none() && app.ui.text_edit.is_none() => {
-            Tool::Move
-        }
-        t => t,
-    };
+    let tool = event_tool(app, mods);
     if tool == Tool::Eyedropper {
         match ev {
             ToolEvent::Down { x, y, .. } | ToolEvent::Move { x, y, .. } => {
@@ -3858,7 +3853,12 @@ pub fn tool_event(app: &mut PhotocraftApp, ev: ToolEvent, mods: egui::Modifiers)
             if !crate::move_ui::moves_selected_pixels(app) && app.ui.tool_options.move_auto_select != mods.command {
                 let target = app.ui.tool_options.move_target.clone();
                 let mode = if mods.shift { "add" } else { "replace" };
+                let before = app.session.active().map(|st| st.selected_layers());
                 let _ = app.run("layer.pickAt", json!({"x": x, "y": y, "target": target, "mode": mode}));
+                // Snapping (and the drag's box) started before the pick: point it at what moves.
+                if app.session.active().map(|st| st.selected_layers()) != before {
+                    crate::snap_ui::retarget_move(app, [x, y], mods);
+                }
             }
             // A locked layer: no drag, and Photoshop's message once the pointer moves (`move_lock`).
             if crate::move_lock::blocked(app, tool, [x, y], mods) {
@@ -4110,6 +4110,18 @@ pub fn selection_drag_kind(app: &PhotocraftApp, tool: Tool, p: [f64; 2], mods: e
         return Some(true);
     }
     (!clicky && !mods.command && selection_mode(app, mods) == "replace").then_some(false)
+}
+
+/// The tool a pointer event with `mods` goes to: ⌘ held is the Move tool (`hold_keys::cmd_moves`).
+/// The canvas resolves the held key before the event (`tool_override`); automation and tests send
+/// the modifier with the event.
+pub(crate) fn event_tool(app: &PhotocraftApp, mods: egui::Modifiers) -> Tool {
+    match app.active_tool() {
+        t if app.tool_override.is_none() && mods.command && crate::hold_keys::cmd_moves(t) && app.ui.transform.is_none() && app.ui.text_edit.is_none() => {
+            Tool::Move
+        }
+        t => t,
+    }
 }
 
 /// Does a ⌘ (⌘⌥) press with selection tool `tool` at `p` move the whole layer (a duplicate with
