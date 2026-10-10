@@ -2171,7 +2171,9 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
     // `View::zoom` is device pixels per document pixel; this canvas's geometry is in its own
     // viewport's egui points. A document window can sit on another display with a different
     // scale, so only the primary canvas records `app.ppp` for the frame's shared helpers
-    // (`point_zoom`, the navigator, control-channel coordinate mapping).
+    // (`point_zoom`, the navigator, control-channel coordinate mapping). `pixels_per_point`
+    // folds in the display scale and Interface › UI Scale alike, so dividing by it keeps 100%
+    // one document pixel per physical display pixel at any UI scale (#2121).
     let ppp = ctx.pixels_per_point();
     if primary {
         app.ppp = ppp;

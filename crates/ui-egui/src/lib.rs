@@ -446,9 +446,10 @@ pub struct PhotocraftApp {
     fonts_ready: bool,
     /// Screen rect of the main canvas last frame (for overlays and the navigator).
     pub last_canvas_rect: egui::Rect,
-    /// Physical pixels per egui point of the canvas last frame (`ctx.pixels_per_point`). The
-    /// canvas maps document pixels to physical pixels, so point-space geometry divides the view
-    /// zoom by this (see [`Self::point_zoom`]).
+    /// Physical pixels per egui point of the canvas last frame (`ctx.pixels_per_point`, which
+    /// folds in both the display scale and Interface › UI Scale). The canvas maps document pixels
+    /// to physical pixels, so point-space geometry divides the view zoom by this (see
+    /// [`Self::point_zoom`]).
     pub ppp: f32,
     /// The document area showing the active document's canvas last frame (not the tabs, the
     /// start screen or an opening file's card): files dropped here are placed as layers.

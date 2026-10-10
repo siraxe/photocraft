@@ -402,7 +402,8 @@ pub enum DialogKind {
 pub struct View {
     /// Screen (device) pixels per document pixel: the user-facing zoom (`100%` is `1.0`).
     /// Canvas geometry works in egui points and divides by `ctx.pixels_per_point`
-    /// (`PhotocraftApp::point_zoom`), so a scaled display doesn't magnify the image.
+    /// (`PhotocraftApp::point_zoom`), so neither the display scale nor Interface › UI Scale
+    /// magnifies the image (#1943, #2121).
     pub zoom: f32,
     /// Document-space point shown at the canvas centre.
     pub center: [f32; 2],
