@@ -659,6 +659,15 @@ impl ViewXform {
     }
 }
 
+/// Document point under a screen position on the main canvas, or `None` when the position is
+/// outside it: the rulers are not part of the canvas, so drops on the ruler strip are not
+/// canvas drops. Preset-panel drops and drag-and-drop placement share this so both land exactly
+/// where the canvas draws.
+pub fn doc_point_at(app: &PhotocraftApp, pos: Pos2) -> Option<[f64; 2]> {
+    let xf = ViewXform::active(app)?;
+    xf.rect.contains(pos).then(|| xf.to_doc(pos))
+}
+
 /// Fit the document into `area` (egui points) for a display with `ppp` physical pixels per
 /// point; `View::zoom` is stored in physical pixels per document pixel.
 pub fn fit_view(view: &mut View, doc: &Document, area: Vec2, ppp: f32) {
@@ -752,6 +761,9 @@ pub(crate) const GPU_OUTPUT: u32 = u32::MAX;
 
 /// The document to render: the committed one, or a clone with the live adjustment preview applied.
 pub(crate) fn display_doc(app: &mut PhotocraftApp, idx: usize) -> (std::sync::Arc<Document>, u64) {
+    if let Some(shown) = crate::solid_fill_ui::display_doc(app, idx) {
+        return shown;
+    }
     if let Some(shown) = crate::type_transform::display_doc(app, idx) {
         return shown;
     }

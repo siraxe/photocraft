@@ -19,8 +19,8 @@ mod recovery_tests;
 /// Everything File › Open reads: PhotoCraft, Photoshop and Affinity documents, flat images, and
 /// Photoshop brushes (.abr), gradients (.grd) and swatches (.aco, .ase), which go to the preset libraries.
 const OPEN_EXTS: &[&str] = &[
-    "pcraft", "psd", "psb", "psdt", "png", "jpg", "jpeg", "tif", "tiff", "webp", "gif", "bmp", "tga", "ico", "qoi", "exr", "hdr", "pbm", "pgm", "ppm", "pam",
-    "pfm", "heic", "heif", "hif", "dng", "cr2", "cr3", "nef", "nrw", "arw", "pef", "orf", "rw2", "raf", "abr", "grd", "svg", "svgz", "aco", "ase", "af",
+    "pcraft", "pdn", "psd", "psb", "psdt", "png", "jpg", "jpeg", "tif", "tiff", "webp", "gif", "bmp", "tga", "ico", "qoi", "exr", "hdr", "pbm", "pgm", "ppm",
+    "pam", "pfm", "heic", "heif", "hif", "dng", "cr2", "cr3", "nef", "nrw", "arw", "pef", "orf", "rw2", "raf", "abr", "grd", "svg", "svgz", "aco", "ase", "af",
     "afdesign", "afphoto", "afpub",
 ];
 
@@ -87,7 +87,10 @@ fn show_file_dialog(request: FileDialogRequest, parent: Option<&eframe::Frame>, 
             let dialog = if let Some(exts) = extensions {
                 dialog.add_filter("Supported Files", &open_filter_extensions(&exts.iter().map(String::as_str).collect::<Vec<_>>()))
             } else {
-                dialog.add_filter("All Formats", &open_filter_extensions(OPEN_EXTS)).add_filter("PhotoCraft", &open_filter_extensions(&["pcraft"]))
+                dialog
+                    .add_filter("All Formats", &open_filter_extensions(OPEN_EXTS))
+                    .add_filter("PhotoCraft", &open_filter_extensions(&["pcraft"]))
+                    .add_filter("Paint.NET", &open_filter_extensions(&["pdn"]))
             };
             if multiple {
                 let picked = dialog.pick_files();
@@ -356,6 +359,7 @@ pub fn native(automation: Option<photocraft_automation::AuthorizedWorkspace>) ->
         }),
         load_prefs: Some(Box::new(|| std::fs::read_to_string(prefs_file()?).ok())),
         save_prefs: Some(Box::new(|text: &str| write_atomic(&prefs_file().ok_or("no config directory")?, text.as_bytes()))),
+        system_theme: crate::appearance::service(),
         append_text: Some(Box::new(|path: &str, text: &str| {
             use std::io::Write;
             let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path).map_err(|e| e.to_string())?;
