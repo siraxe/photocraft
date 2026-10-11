@@ -1704,6 +1704,7 @@
 	Pen Pressure	Presión de la pluma
 	Pen Tilt	Inclinación de la pluma
 	Pen Tool	Herramienta Pluma
+	Convert Point Tool	Herramienta Convertir punto
 	Photo	Fotografía
 	PhotoCraft website	Sitio web de PhotoCraft
 	Picas	Picas
@@ -2643,4 +2644,15 @@ cameraData	Lens	Objetivo
 	Show Edge	Mostrar borde
 	Show Original	Mostrar original
 	F cycles the views; hold X to see the image	F alterna las vistas; mantén X para ver la imagen
+# Select and Mask Refine Edge Brush (#2972)
+	Refine Edge Brush (R)	Pincel para perfeccionar bordes (R)
+	Expand Detection Area	Ampliar área de detección
+	Restore Original Edge	Restaurar borde original
+	Paint over hair or fur on the image; Alt paints the other mode	Pinte sobre el pelo o el pelaje de la imagen; Alt pinta en el otro modo
+	Clear Brush Strokes	Borrar trazos de pincel
 	Show rulers	Mostrar reglas
+
+# Color Sampler (added with the i18n coverage repair)
+	Click to place · Alt-click or drag off-canvas to remove	Clic para colocar · Alt-clic o arrastrar fuera del lienzo para quitar
+	No document open	Ningún documento abierto
+	{n} of {max} sample points	{n} de {max} puntos de muestreo
