@@ -252,6 +252,8 @@
 	Layer via Cut	잘라내어 레이어 만들기
 	Layer From Background…	배경에서 레이어 만들기…
 	Layer from Background…	배경에서 레이어 만들기…
+	Background from Layer	레이어에서 배경 만들기
+	Background From Layer	레이어에서 배경 만들기
 	New Shape Layer	새 모양 레이어
 	New Type Layer	새 문자 레이어
 	New Fill Layer	새 칠 레이어
@@ -664,6 +666,10 @@
 	Classic Theme	클래식 테마
 	Solarized dark	Solarized 어두움
 	Solarized Dark Theme	Solarized 어두운 테마
+	Breeze dark	Breeze 어두움
+	Breeze Dark Theme	Breeze 어두운 테마
+	Breeze light	Breeze 밝게
+	Breeze Light Theme	Breeze 밝은 테마
 	Next Theme	다음 테마
 	Actions	액션
 	Brush Settings	브러시 설정
@@ -1503,6 +1509,8 @@
 	Blur Tool	흐림 효과 도구
 	Bold	굵게
 	Brush	브러시
+	Pencil	연필
+	Block	블록
 	Brush Pose	브러시 자세
 	Brush Tip Shape	브러시 끝 모양
 	Brush Tool	브러시 도구
@@ -1551,6 +1559,8 @@
 	Efficiency: 100%	효율: 100%
 	Ellipse Tool	타원 도구
 	Elliptical Marquee Tool	원형 선택 윤곽 도구
+	Single Row Marquee Tool	단일 행 선택 윤곽 도구
+	Single Column Marquee Tool	단일 열 선택 윤곽 도구
 	Emboss	엠보스
 	Eraser	지우개
 	Eraser Tool	지우개 도구
@@ -1715,6 +1725,7 @@
 	Scratch: {size}	스크래치: {size}
 	Untagged {mode}	프로파일 없는 {mode}
 	{w} px x {h} px ({ppi} ppi)	{w} px x {h} px ({ppi} ppi)
+	{w} {unit} x {h} {unit} ({ppi} ppi)	{w} {unit} x {h} {unit} ({ppi} ppi)
 	Resolution: {dpi} pixels/inch	해상도: {dpi}픽셀/인치
 	Doc: {w} × {h} px	문서: {w} × {h} px
 	Frame {current} / {total}	프레임 {current} / {total}
@@ -1865,6 +1876,7 @@
 	Show only crosshair while painting	칠하는 동안 십자선만 표시
 	Show slice numbers	분할 영역 번호 표시
 	Show tooltips	도구 설명 표시
+	Show highlight on rollover	롤오버 시 강조 표시
 	Show transformation values	변형 값 표시
 	Slice color	분할 영역 색상
 	Smart guide color	고급 안내선 색상
@@ -1966,6 +1978,7 @@
 	Create Warped Text	뒤틀린 텍스트 만들기
 	Rasterize Smart Object	스마트 오브젝트 래스터화
 	Rasterize Fill Content	칠 내용 래스터화
+	Rasterize Layer Style	레이어 스타일 래스터화
 	Unlock: picking a preset replaces these settings	잠금 해제: 사전 설정 선택 시 이 설정 대체
 	Lock: keep these settings when picking another preset	잠금: 다른 사전 설정 선택 시 이 설정 유지
 	Diameter:	직경:
@@ -2917,6 +2930,7 @@ fontWeight	Italic	기울임
 	Color to Alpha…	색상을 알파로…
 	Transparency Threshold	투명도 한계값
 	Opacity Threshold	불투명도 한계값
+	PhotoCraft — Screen Color Picker	PhotoCraft — 화면 색상 선택기
 
 	Rasterize svg groups deeper than	이 깊이보다 깊은 SVG 그룹 래스터화
 	0 turns this threshold off; SVG groups nested deeper than 100 levels are always rasterized.	0이면 이 임계값을 끕니다. 100단계보다 깊이 중첩된 SVG 그룹은 항상 래스터화됩니다.
@@ -3003,3 +3017,5 @@ fontWeight	Italic	기울임
 	Previous Document	이전 문서
 	W x H x Resolution	폭 x 높이 x 해상도
 	Front Image	전면 이미지
+	Search settings…	설정 검색…
+	No matching settings	일치하는 설정 없음

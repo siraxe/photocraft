@@ -101,6 +101,7 @@ pub mod menu_catalog;
 pub mod menu_nav;
 pub mod menus;
 pub mod monitor_status;
+pub mod move_hover;
 pub mod move_lock;
 pub mod move_mods;
 pub mod move_ui;
@@ -162,6 +163,7 @@ mod tool_cursor;
 pub mod tool_feedback;
 pub mod transform_tex;
 pub mod transform_tool;
+mod type_font_preview;
 pub mod type_panels_ui;
 pub mod type_tool;
 mod type_transform;
@@ -423,6 +425,8 @@ pub struct PhotocraftApp {
     pub(crate) menu_cache: Option<menus::ItemCache>,
     /// Move tool drag shown live (`move_ui`).
     pub(crate) move_preview: Option<move_ui::MovePreview>,
+    /// Move tool › Show Highlight on Rollover: the last hover answer (`move_hover`).
+    pub(crate) move_hover: Option<move_hover::Hover>,
     /// A blend mode hovered in the Layers panel, shown live (`blend_preview`).
     pub(crate) blend_preview: Option<blend_preview::BlendPreview>,
     /// Patch Tool drag: the healed document at the pointer (`patch_preview`).
@@ -570,6 +574,8 @@ pub struct PhotocraftApp {
     /// Type tool layout cache: ((doc, revision, layer), layout).
     pub(crate) type_layout: Option<((u64, u64, u64), std::sync::Arc<photocraft_text::TextLayout>)>,
     pub(crate) type_transform_preview: Option<type_transform::Preview>,
+    /// A font hovered in the Type tool's font picker, shown live (`type_font_preview`).
+    pub(crate) type_font_preview: Option<type_font_preview::TypeFontPreview>,
     /// Channel thumbnails for one document snapshot; view-only revisions reuse their pixels.
     channel_thumbs: Option<(DocId, std::sync::Weak<Document>, bool, Vec<egui::TextureHandle>)>,
     /// Channels panel overlays / channel views drawn over the canvas, per document id.
@@ -625,6 +631,7 @@ impl PhotocraftApp {
             trail: None,
             menu_cache: None,
             move_preview: None,
+            move_hover: None,
             blend_preview: None,
             patch_preview: None,
             shape_stroke_preview: None,
@@ -676,6 +683,7 @@ impl PhotocraftApp {
             channel_views: HashMap::new(),
             type_layout: None,
             type_transform_preview: None,
+            type_font_preview: None,
             guide_drag: None,
             crop: Default::default(),
             hover_doc: None,
@@ -1252,7 +1260,7 @@ impl PhotocraftApp {
         while let Ok(req) = rx.try_recv() {
             let reply = req.reply.clone();
             if req.deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
-                let _ = reply.send(serde_json::json!({"ok": false, "error": "timeout"}));
+                let _ = reply.send(serde_json::json!({"ok": false, "error": control::timeout_error()}));
                 continue;
             }
             match control::handle(self, ctx, &req) {
@@ -1334,6 +1342,7 @@ impl eframe::App for PhotocraftApp {
         }
         self.last_frame_time = now;
         self.sync_views();
+        crate::type_font_preview::follow_hover(self, ctx);
         self.check_gpu(ctx);
         #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
         if self.live_tokens.poll(ctx, self.ui.theme) {
@@ -1973,7 +1982,7 @@ impl PhotocraftApp {
         let r = photocraft_geom::Rect::new(0, 0, w as i32, h as i32);
         let mut surface = photocraft_raster::Surface::from_interleaved(photocraft_color::PixelFormat::RGBA8, r, &bytes);
         surface.prune();
-        self.session.clipboard = Some(photocraft_engine::edit_cmds::Clip { surface, bounds: r });
+        self.session.clipboard = Some(photocraft_engine::edit_cmds::Clip { surface, bounds: r, layers: None });
         self.os_clip_sig = Some(sig);
         self.clip_external = true;
         true
@@ -1990,7 +1999,13 @@ mod input_tests;
 mod pencil_tests;
 
 #[cfg(test)]
+mod pixel_aspect_tests;
+
+#[cfg(test)]
 mod transform_undo_tests;
+
+#[cfg(test)]
+mod transform_type_tests;
 
 #[cfg(test)]
 mod save_identity_tests;

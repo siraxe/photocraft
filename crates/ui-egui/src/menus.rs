@@ -75,6 +75,8 @@ pub const UI_COMMANDS: &[(&str, &str, &[&str], Option<&str>)] = &[
     ("window.theme.solarizedDark", "Solarized Dark Theme", &["Window", "Theme"], None),
     ("window.theme.adwaita", "Adwaita Light Theme", &["Window", "Theme"], None),
     ("window.theme.adwaitaDark", "Adwaita Dark Theme", &["Window", "Theme"], None),
+    ("window.theme.breezeLight", "Breeze Light Theme", &["Window", "Theme"], None),
+    ("window.theme.breezeDark", "Breeze Dark Theme", &["Window", "Theme"], None),
     ("window.theme.system", "Sync with system", &["Window", "Theme"], None),
     ("edit.search", "Search…", &["Edit"], Some("Cmd+F")),
     ("help.discord", "Join the ArtCraft Discord…", &["Help"], None),
@@ -329,7 +331,9 @@ pub(crate) fn invoke_unguarded(app: &mut PhotocraftApp, ctx: &egui::Context, id:
         | "window.theme.classic"
         | "window.theme.solarizedDark"
         | "window.theme.adwaita"
-        | "window.theme.adwaitaDark" => {
+        | "window.theme.adwaitaDark"
+        | "window.theme.breezeLight"
+        | "window.theme.breezeDark" => {
             let k = crate::theme::ThemeKind::from_name(&id["window.theme.".len()..]).unwrap_or_default();
             app.set_theme(ctx, k);
             Ok(Value::Null)
@@ -439,7 +443,7 @@ pub(crate) fn invoke_unguarded(app: &mut PhotocraftApp, ctx: &egui::Context, id:
                 && app.session.active_index().zip(app.session.clipboard.as_ref()).is_some_and(|(i, clip)| {
                     let v = &app.ui.views[i];
                     let pz = app.point_zoom();
-                    let (hw, hh) = (app.last_canvas_rect.width() / 2.0 / pz, app.last_canvas_rect.height() / 2.0 / pz);
+                    let (hw, hh) = (app.last_canvas_rect.width() / 2.0 / pz / app.ui.view.display_aspect(), app.last_canvas_rect.height() / 2.0 / pz);
                     let r =
                         photocraft_geom::Rect::new((v.center[0] - hw) as i32, (v.center[1] - hh) as i32, (v.center[0] + hw) as i32, (v.center[1] + hh) as i32);
                     !clip.bounds.intersect(&r).is_empty()
