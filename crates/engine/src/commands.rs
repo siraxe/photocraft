@@ -136,6 +136,19 @@ pub fn command_specs() -> &'static [CommandSpec] {
     &registry().specs
 }
 
+/// One `command.list` / `engine.commands` row for `c`, given why it can't run now (`None` = it can).
+/// `disabledReason` is that message; `needsDocument` is true when the reason is that no document is
+/// open (#3664), so an agent can tell "open or create a document first" from a precondition that a
+/// document alone won't meet (a selection, an empty clipboard).
+pub fn list_entry(s: &Session, c: &CommandSpec, reason: Option<String>) -> Value {
+    let needs_document =
+        s.active().is_none() && reason.as_deref().is_some_and(|r| ["no document", "no active document", "no open document"].iter().any(|p| r.starts_with(p)));
+    json!({
+        "id": c.id, "label": c.label, "menu": c.menu, "shortcut": c.shortcut, "params": c.params,
+        "enabled": reason.is_none(), "disabledReason": reason, "needsDocument": needs_document,
+    })
+}
+
 pub fn find(id: &str) -> Option<&'static CommandSpec> {
     let registry = registry();
     registry.by_id.get(id).and_then(|&index| registry.specs.get(index))
@@ -256,8 +269,19 @@ pub fn blend_from_str(s: &str) -> Option<BlendMode> {
 /// The active selection as the mask of a layer being created, or None without a selection.
 /// Photoshop masks a new adjustment or fill layer with the selection, so the adjustment acts on
 /// the selected area only (#1250); the selection itself stays, as Reveal Selection leaves it.
-pub(crate) fn selection_mask(doc: &Document) -> Option<LayerMask> {
-    doc.selection.as_ref().map(|sel| LayerMask { surface: sel.clone(), ..LayerMask::reveal_all() })
+pub(crate) fn selection_mask(doc: &Document) -> Result<Option<LayerMask>> {
+    doc.selection.as_ref().map(|sel| mask_at_depth(LayerMask { surface: sel.clone(), ..LayerMask::reveal_all() }, doc.depth)).transpose()
+}
+
+/// New pixel masks use the document's depth, as PSD saves/imports do. Otherwise a later soft
+/// brush stroke quantizes differently depending on whether the document reopened as PSD or
+/// native. Converting a selection keeps its coverage and does not alter the selection itself.
+fn mask_at_depth(mut mask: LayerMask, depth: SampleType) -> Result<LayerMask> {
+    let format = mask.surface.format().with_sample(depth);
+    if mask.surface.format() != format {
+        mask.surface = mask.surface.try_convert(format)?;
+    }
+    Ok(mask)
 }
 
 /// Mask a fill or adjustment layer being created, as Photoshop does: the path selected in the
@@ -276,7 +300,7 @@ pub(crate) fn mask_new_layer(doc: &Document, l: &mut Layer, p: &Value, cmd: &str
     };
     match path {
         Some(path) => l.vector_mask = Some(photocraft_doc::VectorMask::new(path)),
-        None => l.mask = Some(selection_mask(doc).unwrap_or_else(LayerMask::reveal_all)),
+        None => l.mask = Some(mask_at_depth(selection_mask(doc)?.unwrap_or_else(LayerMask::reveal_all), doc.depth)?),
     }
     Ok(())
 }
@@ -553,17 +577,21 @@ fn build() -> Vec<CommandSpec> {
             "Duplicate Layer…",
             ["Layer"],
             None,
-            r##"{"layer":id?,"inPlace":bool=false (artboards: keep the copy on the original instead of beside it)} (no layer: every selected layer)"##,
+            r##"{"layer":id?,"inPlace":bool=false (artboards: keep the copy on the original instead of beside it),"name":str? (one layer: the copy's name)} (no layer: every selected layer)"##,
             has_layer,
             |s, p| {
                 let in_place = p.get("inPlace").and_then(Value::as_bool).unwrap_or(false);
+                let name = p.get("name").and_then(Value::as_str).filter(|n| !n.is_empty()).map(str::to_string);
                 if crate::layer_multi_cmds::multi(s, p) {
                     return crate::layer_multi_cmds::duplicate_selected(s, in_place, "Duplicate Layers");
                 }
                 let id = layer_param(s, p)?;
                 let before = s.active().ok_or(EngineError::NoDocument)?.doc.clone();
                 let nid = s.edit("Duplicate Layer", |doc, active| {
-                    let dup = layer_copy(doc, id)?;
+                    let mut dup = layer_copy(doc, id)?;
+                    if let Some(name) = &name {
+                        dup.name.clone_from(name);
+                    }
                     let nid = doc.insert_above(Some(id), dup);
                     if !in_place {
                         crate::artboard_cmds::place_copy(doc, nid)?;
@@ -746,7 +774,7 @@ fn build() -> Vec<CommandSpec> {
                 below.push(idx - 1);
                 let lower = doc.layer_at(&below).ok_or(EngineError::NoLayer(id))?.clone();
                 let upper = doc.layer(id).ok_or(EngineError::NoLayer(id))?.clone();
-                let merged = pixels::merge_down(doc.bounds(), &lower, &upper, doc.pixel_format());
+                let merged = pixels::merge_down(doc, &lower, &upper);
                 doc.remove(id);
                 *doc.layer_at_mut(&below).ok_or(EngineError::NoLayer(lower.id))? = merged;
                 *active = Some(lower.id);
@@ -863,7 +891,7 @@ fn build() -> Vec<CommandSpec> {
             "Move Layer",
             [],
             None,
-            r##"{"layer":id?,"dx":i32,"dy":i32} (no layer: every selected layer; linked layers follow)"##,
+            r##"{"layer":id?,"dx":i32,"dy":i32,"target":"pixels"|"mask"="pixels"} (no layer: every selected layer; linked layers follow; target mask: a layer whose mask is unlinked moves that mask alone, a linked mask moves with the layer)"##,
             has_layer,
             crate::layer_multi_cmds::translate
         ),
@@ -903,7 +931,7 @@ fn build() -> Vec<CommandSpec> {
             "Brush Stroke",
             [],
             None,
-            r##"{"points":[[x,y,pressure?,tiltX?,tiltY?,rotation?,timeMs?,wheel?],…],"brush":{…BrushSettings}?,"preset":name?,"size":0.5..5000 px?,"hardness":0..1?,"opacity":0..1?,"flow":0..1?,"spacing":0..10?,"color":"#rrggbb"?=foreground,"mode":"normal|multiply|screen|…"="normal","erase":bool?,"smoothing":0..1?,"zoom":number=1,"seed":u64?,"target":"pixels"|"mask"|"quickMask"|{"channel":i}=Channels panel target}"##,
+            r##"{"points":[[x,y,pressure?,tiltX?,tiltY?,rotation?,timeMs?,wheel?],…],"brush":{…BrushSettings}?,"preset":name?,"size":0.5..5000 px?,"hardness":0..1?,"opacity":0..1?,"flow":0..1?,"spacing":0..10?,"color":"#rrggbb"?=foreground,"mode":"normal|multiply|screen|…|clear (erases with this brush)"="normal","erase":bool?,"smoothing":0..1?,"zoom":number=1,"seed":u64?,"target":"pixels"|"mask"|"quickMask"|{"channel":i}=Channels panel target}"##,
             has_paintable,
             crate::brush_cmds::paint_stroke
         ),
@@ -999,18 +1027,7 @@ fn build() -> Vec<CommandSpec> {
             shortcut: None,
             params: "{}",
             enabled: always,
-            run: |s, _| {
-                Ok(Value::Array(
-                    command_specs()
-                        .iter()
-                        .map(|c| {
-                            json!({
-                                "id": c.id, "label": c.label, "menu": c.menu, "shortcut": c.shortcut, "params": c.params, "enabled": (c.enabled)(s).is_ok(),
-                            })
-                        })
-                        .collect(),
-                ))
-            },
+            run: |s, _| Ok(Value::Array(command_specs().iter().map(|c| list_entry(s, c, (c.enabled)(s).err())).collect())),
             journal: false,
         },
         CommandSpec {
@@ -1339,6 +1356,7 @@ fn arrange(s: &mut Session, p: &Value, delta: i32) -> Result<Value> {
 fn set_mask(s: &mut Session, p: &Value, label: &str, mask: Option<LayerMask>) -> Result<Value> {
     let ids = if mask.is_some() { crate::layer_multi_cmds::mask_targets(s, p)? } else { vec![layer_param(s, p)?] };
     s.edit(label, |doc, _| {
+        let mask = mask.clone().map(|mask| mask_at_depth(mask, doc.depth)).transpose()?;
         for id in &ids {
             if mask.is_some() {
                 crate::extra_cmds::background_to_layer_for_mask(doc, *id);
@@ -1400,7 +1418,7 @@ pub(crate) fn translate_layer(doc: &Document, l: &mut Layer, dx: i32, dy: i32) {
 pub(crate) fn layer_copy(doc: &Document, id: LayerId) -> Result<Layer> {
     let src = doc.layer(id).ok_or(EngineError::NoLayer(id))?;
     // A copy of the Background layer is an ordinary, unlocked layer (Photoshop).
-    let from_background = src.name == "Background" && src.locks.transparency && doc.layers.first().is_some_and(|b| b.id == id);
+    let from_background = doc.is_background(id);
     let mut dup = src.duplicate();
     dup.name = doc.copy_name(&dup.name);
     if from_background {
