@@ -486,6 +486,11 @@
 	Color Range…	Intervalo de cores…
 	Focus Area…	Área de foco…
 	Select and Mask…	Selecionar e mascarar…
+# Select and Mask dialog labels
+	Smart Radius	Raio inteligente
+	Shift Edge	Deslocar borda
+	Decontaminate	Descontaminar
+	Refine Edge	Refinar borda
 	Modify	Modificar
 	Border…	Borda…
 	Smooth…	Suavizar…
@@ -754,6 +759,7 @@
 	Split Warp Horizontally	Dividir deformação horizontalmente
 	Split Warp Vertically	Dividir deformação verticalmente
 	Statistics…	Estatísticas…
+	Refine Strokes	Traços de refinamento
 @plural	{n} item|{n} items	{n} item|{n} itens
 	Auto	Automático
 	(print to the printer)	(imprimir na impressora)
@@ -885,6 +891,7 @@
 	Click to zoom in  ·  {key}-click to zoom out  ·  drag right/left to zoom in/out	Clique para aumentar o zoom  ·  {key}-clique para diminuir  ·  arraste para a direita/esquerda para aumentar/diminuir
 	Click with the Note tool to add a note.	Clique com a ferramenta Anotação para adicionar uma anotação.
 	Click: corner · Drag: smooth · Click first point: close · {key} finish · Esc cancel	Clique: canto · Arrastar: suave · Clique no primeiro ponto: fechar · {key}: concluir · Esc: cancelar
+	Click: corner · Drag: smooth · {alt}-drag: break handle · Click or drag first point: close · {key} finish · Esc cancel	Clique: canto · Arrastar: suave · {alt}+arrastar: quebrar alça · Clique ou arraste no primeiro ponto: fechar · {key}: concluir · Esc: cancelar
 	Clip to layer below	Recortar na camada abaixo
 	Clipped	Recortado
 	Close Style Options	Fechar opções de estilo
@@ -1507,6 +1514,7 @@
 	White Balance: As Shot	Equilíbrio de branco: como fotografado
 	Whites	Brancos
 	Width	Largura
+	Slant	Inclinação
 	Width:	Largura:
 	Work Path	Demarcador de trabalho
 	Yellow	Amarelo
@@ -1524,6 +1532,8 @@
 	↑↓ navigate   {key} run   esc close	↑↓ navegar   {key} executar   esc fechar
 	Version {version}	Versão {version}
 	New Document	Novo documento
+	New Document With Mask	Novo documento com máscara
+	New Layer With Mask	Nova camada com máscara
 	Preset Name	Nome da predefinição
 	No saved presets yet.	Nenhuma predefinição salva ainda.
 	Error	Erro
@@ -1920,6 +1930,7 @@
 	Show only crosshair while painting	Mostrar apenas a mira ao pintar
 	Show slice numbers	Mostrar números das fatias
 	Show tooltips	Mostrar dicas de ferramentas
+	Enable animations	Ativar animações
 	Show highlight on rollover	Mostrar realce ao passar o mouse
 	Show transformation values	Mostrar valores de transformação
 	Slice color	Cor das fatias
@@ -2620,6 +2631,8 @@ cameraRaw	Blending	Mesclagem
 	Patch Tool	Ferramenta Correção
 	Patch:	Correção:
 	Lasso around an area, then drag the selection	Contorne uma área com o laço e arraste a seleção
+	Transform On Drop	Transformar ao soltar
+	Scale or rotate the moved area, then press {key}	Dimensione ou gire a área movida e pressione {key}
 	Now drag the selection onto another area	Agora arraste a seleção para outra área
 	3 x 3	3 × 3
 	4 x 4	4 × 4
@@ -2967,7 +2980,7 @@ cameraData	Lens	Lente
 	Freeform Pen Tool	Ferramenta Caneta de forma livre
 	Curvature Pen Tool	Ferramenta Caneta de curvatura
 	Curve Fit:	Ajuste de curva:
-	Drag: draw freehand · Release on the start point: close	Arrastar: desenhar à mão livre · Soltar no ponto inicial: fechar
+	Drag: draw freehand · {alt}-click: straight segment · Release on the start point: close	Arrastar: desenhar à mão livre · {alt}-clique: segmento reto · Soltar no ponto inicial: fechar
 	Click: smooth point · Double-click: corner · Drag a point: move · Click first point: close · {key} finish	Clique: ponto suave · Clique duplo: canto · Arrastar um ponto: mover · Clique no primeiro ponto: fechar · {key}: concluir
 	New Crop Preset…	Nova predefinição de corte…
 	Delete Crop Preset…	Excluir predefinição de corte…
@@ -2979,6 +2992,23 @@ cameraData	Lens	Lente
 	Snap to Origin	Ajustar à origem
 	Search settings…	Pesquisar configurações…
 	No matching settings	Nenhuma configuração encontrada
+	Loading fonts…	Carregando fontes…
+	Tool	Ferramenta
+	Simulate Pressure	Simular pressão
+	Stroke Path…	Traçar demarcador…
+	Background Eraser	Borracha de plano de fundo
+	Healing Brush	Pincel de recuperação
+	Spot Healing Brush	Pincel de recuperação para manchas
+	Smudge	Borrar
+	Sponge	Esponja
+	Amount:	Quantidade:
+	Protect:	Proteger:
+	Protect skin tones	Proteger tons de pele
+	Edit points to modify the curve	Editar pontos para modificar a curva
+	Draw to modify the curve	Desenhar para modificar a curva
+curves	Smooth	Suavizar
+	Smooth the curve values	Suavizar os valores da curva
+	Drag to draw the curve · {key}-click draws a straight line	Arraste para desenhar a curva · {key}-clique traça uma linha reta
 # Select and Mask view modes (#1754)
 	Onion Skin	Papel vegetal
 	Marching Ants	Formigas marchando
@@ -3723,7 +3753,6 @@ layerLabel	No Color	Sem cor
 	Texturizer	Texturizador
 	Tiles	Ladrilhos
 	Tilt-Shift	Tilt-Shift
-	Tool	Ferramenta
 	Trace Contour	Traçar contorno
 	Trap	Encaixe
 	Tree	Árvore
@@ -3755,7 +3784,6 @@ layerLabel	No Color	Sem cor
 	Prime105	Prime 105 mm
 	Prime35	Prime 35 mm
 	Rgb	RGB
-	Sponge	Esponja
 	Warming L B A	Filtro quente LBA
 	Warming81	Filtro quente (81)
 	Warming85	Filtro quente (85)
@@ -3771,3 +3799,15 @@ layerLabel	No Color	Sem cor
 	Set Colors	Definir cores
 	Switch Foreground and Background Colors	Alternar cores de primeiro plano e plano de fundo
 	Target	Alvo
+# Print dialog (#2697)
+	Emulsion Down	Emulsão para baixo
+	Functions	Funções
+	Print Resolution:	Resolução de impressão:
+	Use Previous Layer to Create Clipping Mask	Usar a camada anterior para criar máscara de corte
+	Fill with {mode}-neutral color (white)	Preencher com a cor neutra de {mode} (branco)
+	Fill with {mode}-neutral color (black)	Preencher com a cor neutra de {mode} (preto)
+	Fill with {mode}-neutral color (50% gray)	Preencher com a cor neutra de {mode} (cinza 50%)
+	(No neutral color exists for {mode} mode.)	(Não existe cor neutra para o modo {mode}.)
+	Apply mask to layer before removing?	Aplicar a máscara à camada antes de removê-la?
+	The layer or its mask changed. Drag the mask onto the Trash again.	A camada ou a máscara mudou. Arraste a máscara para a Lixeira novamente.
+	Delete the vector mask?	Excluir a máscara vetorial?
