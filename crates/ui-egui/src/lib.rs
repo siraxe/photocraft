@@ -71,6 +71,7 @@ pub mod distort_ui;
 pub mod doc_props_ui;
 pub mod dock;
 pub mod duplicate_layer_ui;
+pub mod egui_fonts;
 pub mod enable_rules;
 pub mod eraser_ui;
 pub mod export_dialog;
