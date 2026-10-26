@@ -1085,12 +1085,27 @@ mod tests {
             assert!(!app.ui.status_error, "{tool:?}: {}", app.ui.status);
             let (id, p) = app.session.journal.last().unwrap();
             assert_eq!(id, cmd);
-            assert_eq!(p["points"][0], json!([20.0, 30.0, 1.0, 40.0, -25.0, 30.0]), "{tool:?}");
-            assert_eq!(p["points"][1], json!([60.0, 30.0, 1.0, 40.0, -25.0, 30.0]), "{tool:?}");
+            // The Mixer Brush commits the live preview's canonical points (named objects, with
+            // the mouse defaults spelled out); the Color Replacement commits `finish_stroke`'s
+            // compact arrays.
+            let want = |x: f64, y: f64| {
+                if tool == Tool::MixerBrush {
+                    json!({"x": x, "y": y, "pressure": 1.0, "tiltX": 40.0, "tiltY": -25.0, "rotation": 30.0, "wheel": 1.0, "time": 0.0})
+                } else {
+                    json!([x, y, 1.0, 40.0, -25.0, 30.0])
+                }
+            };
+            assert_eq!(p["points"][0], want(20.0, 30.0), "{tool:?}");
+            assert_eq!(p["points"][1], want(60.0, 30.0), "{tool:?}");
             tool_event(&mut app, ToolEvent::Down { x: 20.0, y: 45.0, pressure: 1.0 }, m);
             tool_event(&mut app, ToolEvent::Up { x: 60.0, y: 45.0 }, m);
             let (_, p) = app.session.journal.last().unwrap();
-            assert_eq!(p["points"][0], json!([20.0, 45.0, 1.0]), "{tool:?}, mouse");
+            let want = if tool == Tool::MixerBrush {
+                json!({"x": 20.0, "y": 45.0, "pressure": 1.0, "tiltX": 0.0, "tiltY": 0.0, "rotation": 0.0, "wheel": 1.0, "time": 0.0})
+            } else {
+                json!([20.0, 45.0, 1.0])
+            };
+            assert_eq!(p["points"][0], want, "{tool:?}, mouse");
         }
     }
 
