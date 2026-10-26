@@ -277,7 +277,7 @@ mod tests {
                 egui::CentralPanel::default().show(ui, |ui| crate::canvas::document_area(app, ui));
                 if panel {
                     let at = app.last_canvas_rect.center();
-                    egui::Area::new(egui::Id::new("test-panel")).order(egui::Order::Middle).fixed_pos(at - vec2(100.0, 75.0)).show(ui.ctx(), |ui| {
+                    egui::Area::new(egui::Id::unique("test-panel")).order(egui::Order::Middle).fixed_pos(at - vec2(100.0, 75.0)).show(ui.ctx(), |ui| {
                         ui.set_min_size(egui::vec2(200.0, 150.0));
                         ui.label("Panel");
                     });

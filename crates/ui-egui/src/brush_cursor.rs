@@ -120,7 +120,7 @@ pub(crate) fn turned_axes(axes: [Vec2; 2], deg: f32) -> [Vec2; 2] {
 /// through the *current* view, so zooming or rotating mid-stroke resizes the outline with it. A
 /// mouse (no sample) keeps the brush's own angle.
 pub(crate) fn follow_axes(ctx: &egui::Context, xf: &crate::canvas::ViewXform, brush: &BrushSettings, painting: bool, sample: Option<PenSample>) -> [Vec2; 2] {
-    let id = egui::Id::new("photocraft-tip-follow-pose");
+    let id = egui::Id::unique("photocraft-tip-follow-pose");
     let pose = if painting {
         // The hover left this pose behind: hold it, never re-read mid-stroke.
         ctx.data(|d| d.get_temp::<Option<PenSample>>(id).flatten())
