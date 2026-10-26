@@ -3,7 +3,7 @@
 //! Off, the Wacom driver serves the pen through the Wintab API instead (`wintab32.dll`, installed
 //! by the driver: Tip-Feel'ed pressure at the sensor's full resolution) and keeps synthesizing
 //! the mouse itself. This module synthesizes no mouse messages and applies no feel curve: it
-//! opens a context on the window (`CXO_MESSAGES`), subclasses it for `WT_PACKET` and
+//! opens a context on the window (`CXO_MESSAGES | CXO_SYSTEM`), subclasses it for `WT_PACKET` and
 //! `WT_PROXIMITY`, and reports each reading through the same callback as the other platforms —
 //! pen in range (hovering or touching) is `Some`, back to mouse is `None`. The DLL is loaded
 //! dynamically, so a machine without a Wintab driver fails [`Monitor::install`] cleanly. Packets
@@ -288,10 +288,16 @@ mod win {
     const WT_PROXIMITY: u32 = WT_DEFBASE + 5;
     const WTI_DEFCONTEXT: u32 = 3;
     const CSR_TYPE: u32 = 20;
-    /// `CXO_MESSAGES`: want `WT_*` messages; deliberately without `CXO_SYSTEM` (the driver's own
-    /// system context keeps moving the cursor and clicking, which is what the unchecked box
-    /// promises).
+    /// `CXO_MESSAGES`: want `WT_*` messages. `CXO_SYSTEM`: this context also controls the system
+    /// cursor and clicks while it is topmost. The spec processes contexts in overlap order and
+    /// lets *the topmost context* control the cursor only with `CXO_SYSTEM`: a messages-only
+    /// context on top of the window suppresses the driver's own system context instead of
+    /// coexisting with it, and the pen's cursor stops moving over the app ([OBSERVED 2026-10-26,
+    /// Windows 11, Wacom driver]). With `CXO_SYSTEM` the driver keeps synthesizing the cursor
+    /// motion and mouse messages for the pen (what the unchecked "Use Windows Ink" box promises),
+    /// while the packets bring the pressure.
     const CXO_MESSAGES: u32 = 0x0004;
+    const CXO_SYSTEM: u32 = 0x0001;
     /// The subclass id (`'pcwt'`), and `WM_NCDESTROY`, the last message a window receives.
     const SUBCLASS_ID: usize = 0x7063_7774;
     const WM_NCDESTROY: u32 = 0x0082;
@@ -512,13 +518,13 @@ mod win {
                 return Err(Error::Unsupported("no Wintab devices (WTInfo reports none)".into()));
             }
 
-            // The default context, tuned for this window: our packet fields as messages, without
-            // the system-cursor option.
+            // The default context, tuned for this window: our packet fields as messages, and the
+            // system-cursor option so the driver keeps moving the cursor (see `CXO_SYSTEM`).
             let mut lc: LOGCONTEXT = dll.entry(WTI_DEFCONTEXT, 0).ok_or_else(|| Error::Platform("WTInfo WTI_DEFCONTEXT failed".into()))?;
             for (i, ch) in "Photocraft".encode_utf16().take(39).enumerate() {
                 lc.name[i] = ch;
             }
-            lc.options = CXO_MESSAGES;
+            lc.options = CXO_MESSAGES | CXO_SYSTEM;
             lc.msg_base = WT_DEFBASE;
             // The default context's own device supplies the layout (supported fields only), the
             // move mask and the scales — a context on device 1 must not read device 0's.
