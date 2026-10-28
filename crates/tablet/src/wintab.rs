@@ -278,7 +278,10 @@ mod win {
     use windows::Win32::UI::WindowsAndMessaging::IsWindow;
     use windows::core::w;
 
-    use super::*;
+    use super::{
+        DVC_NPRESSURE, DVC_ORIENTATION, DeviceInfo, PenStream, Reading, Sample, Scales, Update, context_settings, cursor_type_entry, packet_for_context,
+        packet_serial, proximity_entering,
+    };
     use crate::{Error, deliver};
 
     // `wintab.h`: the default message base (`WT_PACKET`/`WT_PROXIMITY` are its offsets), the
