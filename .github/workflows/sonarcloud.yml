@@ -43,8 +43,11 @@ jobs:
     needs: token
     # Skip instead of running the scan with the literal fallback below when the token is absent.
     if: needs.token.outputs.available == 'true'
-    # Tracked at @main so org-wide CI improvements propagate without PR churn.
+    # Track shared CI improvements on main.
     uses: storytold/craft-common-actions/.github/workflows/sonarcloud.yml@main
+    with:
+      timeout-minutes: 120
+      fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
     secrets:
       # The shared workflow declares SONAR_TOKEN required, so the caller must pass the name
       # unconditionally: GitHub validates required secrets at workflow evaluation, before any
